@@ -1,0 +1,50 @@
+ntclks (LeonOS 4 kernel) NOTICE
+===============================
+
+This NOTICE file records attribution and license information for the ntclks
+repository: the LeonOS 4 Ring-0 kernel, boot loader, UAPI surface and
+bootstrap drivers. It is not a license and does not change the license of any
+component. ntclks-owned source is governed by the root LICENSE file. Each
+third-party component remains governed by its own license.
+
+Complete license texts are kept with the corresponding source, submodule,
+or fetched build input. The paths below refer to this repository unless an
+installed path is explicitly shown.
+
+ntclks-owned code
+-----------------
+
+Copyright and licensing terms for code written for the ntclks kernel are
+specified by the root LICENSE file (Apache License 2.0, with the identifying
+copyright notice at its end). Third-party source must not be relicensed under
+that file merely because it is distributed in the same repository or image.
+
+Third-party components in this repository
+-----------------------------------------
+
+* GNU Unifont 16.0.04 (unifont_all-16.0.04.hex.gz, the pinned build input
+  fetched into cache/downloads by `make fetch` from the URL recorded in
+  configs/dependencies.lock.json): the compiled fonts are covered by the SIL
+  Open Font License 1.1 and by the GNU GPL version 2 or later with the GNU
+  font embedding exception; the rest of the upstream distribution is
+  GPL-2.0-or-later. See resources/licenses/unifont-LICENSE. At build time the
+  glyph data is transformed into the generated cjk_font.h consumed by
+  drivers/bootstrap/framebuffer.c (see mk/resources.mk).
+* zlib 1.3.2 puff (third_party/zlib/contrib/puff/puff.c): zlib License. See
+  third_party/zlib/LICENSE. Copyright (C) 2002-2013 Mark Adler.
+* kconfig-frontends 3.12.0.0 (git submodule at third_party/kconfig-frontends):
+  the Kconfig parser and front ends are extracted from the Linux kernel source
+  tree, which is covered by the GNU General Public License version 2 only.
+  See the COPYING file in the submodule. It is a build-time configuration
+  tool only; no kconfig-frontends code is linked into the kernel products.
+
+Distribution requirements
+-------------------------
+
+When distributing binaries built from this repository, provide the
+corresponding source and build/porting changes required by each component's
+license. Preserve copyright notices, license texts, disclaimers, and required
+attribution in the source tree and in the distributed artifacts. Do not
+describe the entire distribution as Apache-2.0 unless the statement is
+explicitly limited to ntclks-owned code and all third-party terms remain
+visible.

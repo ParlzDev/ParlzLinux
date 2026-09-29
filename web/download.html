@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>download — parlz</title>
+<meta name="description" content="下载 ParlzOS：当前版本的装机 ISO 与整盘 IMG，以及历代更老的版本。附 sha256 与用法。">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23000'/><rect x='3' y='4' width='2' height='8' fill='%2300e08a'/></svg>">
+<script src="boot.js"></script>
+<!-- 全站字体**非阻塞**加载（原因见 index.html 那段注释：@import 会卡住手机端首次绘制） -->
+<link rel="preconnect" href="https://fontsapi.zeoseven.com" crossorigin>
+<link rel="stylesheet" href="https://fontsapi.zeoseven.com/198/main/result.css" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="download">
+<div id="spot" aria-hidden="true"></div>
+<main>
+
+  <div class="top">
+    <div class="brand">parlz</div>
+    <nav class="nav">
+      <a href="index.html" data-i18n="nav.index">首页</a>
+      <a href="packages.html" data-i18n="nav.packages">软件包</a>
+      <a href="download.html" aria-current="page" data-i18n="nav.download">下载</a>
+      <a href="license.html" data-i18n="nav.licenses">许可证</a>
+      <a href="git.html" data-i18n="nav.git">仓库</a>
+      <a href="sim.html" data-i18n="nav.sim">模拟机</a>
+      <span class="langbox"><select class="lang" id="lang" aria-label="切换语言" data-i18n-attr="aria-label:nav.lang">
+        <option value="en-US">English</option>
+        <option value="zh-CN">简体中文</option>
+        <option value="zh-Hant">繁體中文</option>
+        <option value="pt">Português</option>
+        <option value="fr">Français</option>
+        <option value="es">Español</option>
+        <option value="id">Bahasa Indonesia</option>
+        <option value="hi">हिन्दी</option>
+        <option value="bn">বাংলা</option>
+        <option value="ar">العربية</option>
+        <option value="ur">اردو</option>
+      </select></span>
+      <button class="theme" id="theme" type="button" aria-label="切换明暗主题" data-i18n="nav.theme" data-i18n-attr="aria-label:theme.aria">主题</button>
+    </nav>
+  </div>
+
+  <div class="hero">
+    <h1 id="word">download<span class="cursor" aria-hidden="true"></span></h1>
+    <p class="lede" data-reveal style="--d:.3s" data-i18n-html="download.lede">产物都在同一域名下（<code>https://www.parlz.com/downloads/…</code>）。
+      下完先核 <b>sha256</b>，再拿去引导；历代版本在下面单独列了一节。</p>
+  </div>
+
+  <section data-reveal>
+    <h2 data-i18n="download.cur.h2">当前版本</h2>
+    <dl style="margin-bottom:14px">
+      <dt data-i18n="download.relid">发布号</dt>
+      <dd>CST+0800+20260927-190002+jgzyes@parlz.com+rc.0.1-F\V</dd>
+      <dt data-i18n="download.kernel">内核</dt>
+      <dd>7.2.5（GPL-2.0）· 引导 SeaBIOS → MBR → syslinux → vmlinuz(initramfs) → ext2 根 → pivot_root</dd>
+    </dl>
+    <div class="dl">
+      <a href="downloads/parlz-rc.0.1-20260927-190002-install.iso" download>
+        <span class="kind">ISO</span>
+        <span class="meta" data-i18n-html="download.iso.meta">装机盘 · VMware / 真机挂载引导；空盘自动装盘；屏与串口双路输出；<br>
+          含 2026-09-27 22:03 的 ifc 修复（配网不再卡在等 link up）<br>
+          sha256 6f237d8e…fadac9f</span>
+        <span class="size">150.7 MiB ↓</span>
+      </a>
+      <a href="downloads/parlz-rc.0.1-20260927-190002-installed-disk.img" download>
+        <span class="kind">IMG</span>
+        <span class="meta" data-i18n-html="download.img.meta">装好的整盘（分区 2 是 ext2 根）· QEMU 用 virtio 直接挂；
+          首启会要求设用户名/密码<br>
+          sha256 d5435dba…32f70776</span>
+        <span class="size">512 MiB ↓</span>
+      </a>
+    </div>
+  </section>
+
+  <section data-reveal style="--d:.1s">
+    <h2 data-i18n="download.old.h2">历代版本（更老的）</h2>
+    <div class="dl">
+      <a href="downloads/parlz-rc.0.1-20260927-190002-r1-install.iso" download>
+        <span class="kind">09-27<br>19:15</span>
+        <span class="meta" data-i18n-html="download.old.e1"><code>…-190002-r1-install.iso</code> · 同发布号 190002：VGA 序 +
+          El Torito load secs 4（VMware 可引导）、引导器自报家门；<b>不含</b> ifc 修复<br>
+          sha256 a31c28be…893e7ebe</span>
+        <span class="size">150.7 MiB ↓</span>
+      </a>
+      <a href="downloads/parlz-rc.0.1-20260927-175626-install.iso" download>
+        <span class="kind">09-27<br>17:56</span>
+        <span class="meta" data-i18n-html="download.old.e2"><code>…-175626-install.iso</code> · 首个 rc：串口序
+          （<code>/dev/console=ttyS0</code>）、rootfs 在 ISO 里被打包两遍；
+          无 VGA 顺序修复、无 load-secs 修复<br>
+          sha256 2a995889…5a5049f7</span>
+        <span class="size">181.5 MiB ↓</span>
+      </a>
+      <a href="downloads/parlz-rc.0.1-20260927-175626-installed-disk.img" download>
+        <span class="kind">09-27<br>17:56</span>
+        <span class="meta" data-i18n-html="download.old.e3"><code>…-175626-installed-disk.img</code> · 首版装好的整盘；
+          盘上账号是当时验收脚本建的 <code>tester / parlz123</code><br>
+          sha256 2b8731e3…0517826a</span>
+        <span class="size">512 MiB ↓</span>
+      </a>
+    </div>
+    <p class="hint" data-i18n-html="download.old.hint">老版本只作留档：引导链上的坑（VGA 顺序、El Torito load secs、ifc 等待）
+      都是后来才修的，装盘/配网可能表现异常。</p>
+  </section>
+
+  <section data-reveal style="--d:.15s">
+    <h2 data-i18n="download.how.h2">怎么用</h2>
+    <pre><span class="c" data-i18n="download.how.c1"># ISO：挂光驱引导（QEMU 示例，-hda 换成你的空白盘）</span>
+$ qemu-system-x86_64 -m 1024 -cdrom parlz-rc.0.1-20260927-190002-install.iso -boot d -hda disk.img
+
+<span class="c" data-i18n="download.how.c2"># IMG：装好的整盘，直接当硬盘挂（virtio）</span>
+$ qemu-system-x86_64 -m 1024 -drive file=parlz-rc.0.1-20260927-190002-installed-disk.img,if=virtio</pre>
+    <p class="hint" data-i18n-html="download.how.hint">VMware 里把 ISO 指到 CD/DVD 并勾 "Connect at power on"；固件要用
+      <b>BIOS</b>（这张 ISO 只有 El Torito BIOS 引导记录）。整盘 IMG 首启会要求设账号。
+      包（<code>.pm</code>）与 feed 地址在 <a class="u" href="packages.html">packages</a> 页。</p>
+  </section>
+
+  <section data-reveal style="--d:.2s">
+    <h2 data-i18n="download.sum.h2">校验</h2>
+    <pre><span class="c" data-i18n="download.sum.c1"># Linux / WSL / macOS（当前版本的 ISO）</span>
+$ sha256sum parlz-rc.0.1-20260927-190002-install.iso
+6f237d8e04b1312d595b9fe3a8c589c726842f50ba27e7565eee67622fadac9f  parlz-rc.0.1-20260927-190002-install.iso
+
+<span class="c" data-i18n="download.sum.c2"># 历代版本的 sha256 见上表；Windows 用</span>
+&gt; certutil -hashfile &lt;文件&gt; SHA256</pre>
+  </section>
+
+  <div class="ticker" aria-hidden="true">
+    <div id="tick"></div>
+  </div>
+
+  <footer>
+    <span>© JGZ_YES &amp; ParlzOS
+      (<a class="u" href="mailto:jgzyes@parlz.com">jgzyes@parlz.com</a>,
+       <a class="u" href="mailto:os@parlz.com">os@parlz.com</a>)</span>
+  </footer>
+
+</main>
+<script src="i18n.js"></script>
+<script src="settings.js"></script>
+<script src="app.js"></script>
+<script src="router.js"></script>
+</body>
+</html>

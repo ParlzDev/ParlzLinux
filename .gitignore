@@ -1,0 +1,75 @@
+# ParlzOS 源码仓库的忽略表（仓库数据在 git/parlz.git，工作区本身不放 .git）
+#
+# 为什么是**白名单**：这个工作区根目录里堆着历次构建/调试留下的暂存目录
+# （um/ csonly/ cx/ g4/ bin/ mroot/ nanocheck/ nanorun/ v2/ t2/ sroot/ mnt/ proc/ sys/ dev/ …），
+# 还有自带 .git 的 TLS-SSH/。用"排除列表"逐个写既长又挡不住下一次多出来的目录，
+# 而 git add -A 撞上 Windows 重解析点还会报 "Function not implemented"。
+# 所以：先 /* 全排除，再逐项放行。**注释必须单独一行** —— gitignore 没有行尾注释，
+# 把说明写在模式后面会让这条模式永远匹配不上（第一版就是这么把内核树漏掉的）。
+
+# 1) 先把根下所有东西排除
+/*
+
+# 2) 再逐项放行（这些才是仓库内容）
+!/.gitignore
+!/README.md
+!/AGENTS.md
+!/STATUS.md
+!/.parlz-release
+!/.parlz-release-ntclks
+!/.pm-release
+!/build.bat
+!/install.bat
+!/run.bat
+!/nettest.sh
+# 就地改造的内核树（94,750 个文件的干净源码树）
+!/linux-7.2.5/
+# 自研用户空间：sh / login / install / cpfs / mkfs / ifc / pm 等
+!/userland/
+# 构建与验收脚本
+!/scripts/
+# 官网与模拟机
+!/web/
+# Ring-0 支路（Apache-2.0 上游 + 我们的发行版脚本）
+!/NTCLKS-main/
+!/PWeb/
+!/third_party/
+!/vendor/
+
+# 3) 放行目录里再挖掉不该进的
+# pm 镜像站的分发物（1.5 GB 的 .pm）：走下载不走 git
+/web/feed/
+# 演示用的真 ELF 字节
+/web/rootfs/
+# ISO / IMG 产物
+/web/downloads/
+# 官网仓库浏览器的导出数据（scripts/web-git-export.sh 生成）
+/web/git/
+# 仓库本体自己不进自己
+/git/
+# 构建产物与镜像
+/images/
+/output/
+*.iso
+*.img
+*.deb
+*.cpio
+*.cpio.gz
+*.log
+.tmp-*
+
+# 4) 内核树里的构建残留（当前是干净源码树，这条是防手滑）
+*.o
+*.ko
+*.mod
+*.mod.c
+.*.cmd
+modules.order
+Module.symvers
+/vmlinux
+/System.map
+
+# 5) 别的仓库/编辑器噪声（TLS-SSH/ 自带 .git，要进得改成 submodule）
+/.zcode/
+Thumbs.db
+desktop.ini

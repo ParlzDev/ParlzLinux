@@ -1,0 +1,59 @@
+Parlz 真正 OPKG 移植（2026-09-17）
+
+来源与许可证
+- 官方发布：https://downloads.yoctoproject.org/releases/opkg/opkg-0.8.0.tar.gz
+- SHA256：582a4c9e220cce0b7d08a0915c95db9f24ae43ad372ed5d42d5ec5f6cd413f0c
+- 官方 SHA256SUMS 和 detached ASC 一并保存。SHA256 已核对；ASC 仅保存，未验证签名者身份，不能声称通过 GPG 认证。
+- vendor/opkg-0.8.0 是原始发布解包，未打补丁。构建从校验过的 tarball 解包到 WSL 本地盘。
+- 选 0.8.0 是因为它仍含完整上游内部依赖 solver，避免为 libsolv 另增移植；不是声称最新版本。
+- GPL-2.0-or-later，完整 COPYING 和源码头保留。不要只分发二进制而丢弃对应源码及许可证。
+- 静态链接的 Ubuntu libarchive、nettle、acl、zstd、lz4、bz2、zlib、lzma、xml2、glibc 仍各受其许可证约束；发布产品时须同时履行这些依赖的源码/重链接等义务。
+
+构建（WSL Ubuntu-26.04；不调用全量构建）
+  sh /mnt/f/Linux/Parlz/scripts/build-opkg.sh
+依赖：gcc make binutils pkg-config libtool/autotools、libarchive-dev 和对应静态依赖开发包。
+Ubuntu 26.04 本机已安装成功；干净系统可能还需 nettle-dev libacl1-dev libzstd-dev liblz4-dev libbz2-dev zlib1g-dev liblzma-dev libxml2-dev。
+OPKG_BUILD_DIR 默认 /home/jgzyes/parlz-opkg，可指定全新 /home 下目录复验。
+输出 bin/{opkg-native,opkg,ppm}，均非 PIE 静态 x86-64 ELF；readelf 验证无 INTERP。
+configure.log/build.log 保存在构建目录。make 阶段必须使用 libtool -all-static，仅 -static 会意外产生动态链接程序。
+
+集成（主代理修改 shared build-userland.sh，本任务未改）
+- CMake 现有 ppm/opkg 目标可继续构建：opkg.c 只是入口，miniz 不再使用，可从该目标移除。
+- rootfs 布局完成后、打包前执行 build-opkg.sh；将 /home/jgzyes/parlz-opkg/stage/. 合并到新 rootfs。
+- stage 含 /bin/{ppm,opkg,opkg-native}、/etc/opkg/opkg.conf、/usr/share/opkg/intercept 三个上游脚本和 COPYING。
+- 默认配置没有任何第三方 feed，不冒充可安装 OpenWrt/其他 ABI 不兼容包。
+- /etc/opkg/*.conf 是默认配置入口；-f 可指定独立配置。数据库 /var/lib/opkg，cache /var/cache/opkg。
+- wget 必须在 PATH 中（guest 使用 Parlz/PazeSSL wget），/bin/sh 必须为可执行标准脚本的真实 shell。
+- 上游 intercept 只是延迟执行 ldconfig/depmod/update-modules；目标包若要求这些外部工具，仍需在系统实际提供它们。
+
+命令语义
+  ppm update
+  ppm install <名称或标准.ipk>
+  ppm remove <名称>
+  ppm list                 # 现在遵循原生 OPKG：可用包
+  ppm list-installed       # 已安装包
+  ppm info <名称>
+  ppm opkg --version
+  ppm opkg -f <配置> --offline-root <根目录> install <包>
+PPM 用 execv 原样转交参数，保留后端 PID/退出状态，不使用 system()。opkg 入口同样转交。
+同目录必须有 opkg-native，缺失报错退出 127，不会回落到 toy 实现。
+旧 .ppm 读写器头格式和流位置不匹配，不能可靠读取，已停用；make/legacy-* 明确失败退出 2。
+原代码备份 userland/legacy-backup/*.original。旧 .ppm 包和 toy opkg 数据库不自动迁移。
+
+功能与限制（不要把“真实上游”理解为所有可选功能都开启）
+- 完整上游内部依赖解析、feed index、安装/升级/配置/移除、包脚本和元数据实现。
+- SHA256 启用，gzip/xz/bzip2/lz4/zstd 启用。高级 solver dist-upgrade 需要 libsolv，此构建没有。
+- GPG/GPGME 关闭，没有 feed/package 签名认证；仅 SHA256 内容校验不代表来源可信。
+- 内嵌 libcurl/ssl-curl 关闭，上游外部 wget backend 以 argv 执行 wget -q -O <文件> <URL>。
+- HTTPS/TLS 与证书验证完全由外部 PazeSSL wget 决定；未声称本任务验证 HTTPS 或证书信任链。HTTP localhost 实测可用。
+- wget backend 无 libcurl 的进度/断点缓存等增强功能；上游代理 -Y on 与 Parlz wget 的兼容性未验证。
+- 安装脚本是包提供的任意程序，需信任包来源；--offline-root 不是安全沙箱。默认不运行脚本；--force-postinstall 下脚本必须正确使用 PKG_ROOT。
+
+测试
+  python3 /mnt/f/Linux/Parlz/scripts/test-opkg.py
+  PATH=/home/jgzyes/parlz-userland/build/bin:/usr/bin:/bin python3 /mnt/f/Linux/Parlz/scripts/test-opkg.py
+每次创建全新 /home/jgzyes/parlz-opkg/test-*，HTTP server 仅监听 127.0.0.1 随机端口，生成标准 ar .ipk 及 Packages.gz。
+验证 update、架构配置、list/info、版本约束依赖自动安装、缺失依赖失败、被依赖包删除保护、pre/postinst/prerm/postrm、安装/删除文件、本地 .ipk、SHA256 损坏拒绝、后端错误状态传递。
+完整命令和输出保存在每次 scratch/commands.log。WSL 普通用户无法 chown root 的提示不影响 payload/数据库/脚本断言。
+第二轮将 Parlz wget 放 PATH 首位；其 paze_tls_new 符号已确认，但该测试仅 HTTP。
+测试未操作宿主机包数据库；未执行全量构建、未重打 initramfs、未验证 QEMU 启动。

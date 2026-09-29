@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>packages — parlz</title>
+<meta name="description" content="ParlzOS 的 pm 包列表：索引与 .pm 包由本站托管，可直接作为 /etc/pm/feeds.conf 的源。">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23000'/><rect x='3' y='4' width='2' height='8' fill='%2300e08a'/></svg>">
+<script src="boot.js"></script>
+<!-- 全站字体**非阻塞**加载（原因见 index.html 那段注释：@import 会卡住手机端首次绘制） -->
+<link rel="preconnect" href="https://fontsapi.zeoseven.com" crossorigin>
+<link rel="stylesheet" href="https://fontsapi.zeoseven.com/198/main/result.css" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="packages">
+<div id="spot" aria-hidden="true"></div>
+<main>
+
+  <div class="top">
+    <div class="brand">parlz</div>
+    <nav class="nav">
+      <a href="index.html" data-i18n="nav.index">首页</a>
+      <a href="packages.html" aria-current="page" data-i18n="nav.packages">软件包</a>
+      <a href="download.html" data-i18n="nav.download">下载</a>
+      <a href="license.html" data-i18n="nav.licenses">许可证</a>
+      <a href="git.html" data-i18n="nav.git">仓库</a>
+      <a href="sim.html" data-i18n="nav.sim">模拟机</a>
+      <span class="langbox"><select class="lang" id="lang" aria-label="切换语言" data-i18n-attr="aria-label:nav.lang">
+        <option value="en-US">English</option>
+        <option value="zh-CN">简体中文</option>
+        <option value="zh-Hant">繁體中文</option>
+        <option value="pt">Português</option>
+        <option value="fr">Français</option>
+        <option value="es">Español</option>
+        <option value="id">Bahasa Indonesia</option>
+        <option value="hi">हिन्दी</option>
+        <option value="bn">বাংলা</option>
+        <option value="ar">العربية</option>
+        <option value="ur">اردو</option>
+      </select></span>
+      <button class="theme" id="theme" type="button" aria-label="切换明暗主题" data-i18n="nav.theme" data-i18n-attr="aria-label:theme.aria">主题</button>
+    </nav>
+  </div>
+
+  <div class="hero">
+    <h1 id="word">packages<span class="cursor" aria-hidden="true"></span></h1>
+    <p class="lede" data-reveal style="--d:.3s" data-i18n-html="packages.lede">索引与包文件就在本站，<code>feeds.conf</code> 写上这一行即可用。</p>
+  </div>
+
+  <section data-reveal>
+    <h2 data-i18n="packages.src.h2">源</h2>
+    <p class="feedline">
+      <code id="feedurl">/feed</code>
+      <button class="copy" id="copyfeed" type="button" data-i18n="pkg.copy">复制</button>
+    </p>
+    <pre style="margin-top:16px"><span class="c" data-i18n="packages.src.comment"># guest 里（parlz-sh 的内建 echo 不处理重定向，用 busybox 的）</span>
+$ /bin/busybox echo <span id="feedurl2">/feed</span> &gt; /etc/pm/feeds.conf
+$ pm available
+$ pm install core</pre>
+  </section>
+
+  <section data-reveal style="--d:.1s">
+    <h2 data-i18n="packages.pkg.h2">包</h2>
+    <p class="state" id="state" data-i18n="packages.state.reading">读取 /feed/Packages…</p>
+    <table id="pkgs" hidden>
+      <thead>
+        <tr><th data-i18n="packages.th.name">包</th><th class="ver" data-i18n="packages.th.ver">版本</th><th data-i18n="packages.th.size">大小</th><th style="text-align:end" data-i18n="packages.th.cmd">安装 / 下载</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <p class="hint" id="note" hidden></p>
+  </section>
+
+  <footer>
+    <span>© JGZ_YES &amp; ParlzOS
+      (<a class="u" href="mailto:jgzyes@parlz.com">jgzyes@parlz.com</a>,
+       <a class="u" href="mailto:os@parlz.com">os@parlz.com</a>)</span>
+  </footer>
+
+</main>
+<script src="i18n.js"></script>
+<script src="settings.js"></script>
+<script src="app.js"></script>
+<script src="router.js"></script>
+</body>
+</html>

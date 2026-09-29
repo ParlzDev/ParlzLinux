@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>licenses — parlz</title>
+<meta name="description" content="ParlzOS 的许可证与引用：自有代码 GPL-2.0-or-later，内核沿用 Linux，其余上游组件逐项列出许可与出处。">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23000'/><rect x='3' y='4' width='2' height='8' fill='%2300e08a'/></svg>">
+<script src="boot.js"></script>
+<!-- 全站字体**非阻塞**加载（原因见 index.html 那段注释：@import 会卡住手机端首次绘制） -->
+<link rel="preconnect" href="https://fontsapi.zeoseven.com" crossorigin>
+<link rel="stylesheet" href="https://fontsapi.zeoseven.com/198/main/result.css" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="license">
+<div id="spot" aria-hidden="true"></div>
+<main>
+
+  <div class="top">
+    <div class="brand">parlz</div>
+    <nav class="nav">
+      <a href="index.html" data-i18n="nav.index">首页</a>
+      <a href="packages.html" data-i18n="nav.packages">软件包</a>
+      <a href="download.html" data-i18n="nav.download">下载</a>
+      <a href="license.html" aria-current="page" data-i18n="nav.licenses">许可证</a>
+      <a href="git.html" data-i18n="nav.git">仓库</a>
+      <a href="sim.html" data-i18n="nav.sim">模拟机</a>
+      <span class="langbox"><select class="lang" id="lang" aria-label="切换语言" data-i18n-attr="aria-label:nav.lang">
+        <option value="en-US">English</option>
+        <option value="zh-CN">简体中文</option>
+        <option value="zh-Hant">繁體中文</option>
+        <option value="pt">Português</option>
+        <option value="fr">Français</option>
+        <option value="es">Español</option>
+        <option value="id">Bahasa Indonesia</option>
+        <option value="hi">हिन्दी</option>
+        <option value="bn">বাংলা</option>
+        <option value="ar">العربية</option>
+        <option value="ur">اردو</option>
+      </select></span>
+      <button class="theme" id="theme" type="button" aria-label="切换明暗主题" data-i18n="nav.theme" data-i18n-attr="aria-label:theme.aria">主题</button>
+    </nav>
+  </div>
+
+  <div class="hero">
+    <h1 id="word">licenses<span class="cursor" aria-hidden="true"></span></h1>
+    <p class="lede" data-reveal style="--d:.3s" data-i18n-html="license.lede">ParlzOS 自己写的那部分（<code>userland/</code>、<code>scripts/</code>、标识层）
+      以 <b>GPL-2.0-or-later</b> 发布；其余都是上游组件，各自的许可与出处列在下面。</p>
+  </div>
+
+  <section data-reveal>
+    <h2 data-i18n="license.up.h2">上游组件</h2>
+    <table>
+      <thead>
+        <tr><th data-i18n="license.th.component">组件</th><th class="ver" data-i18n="license.th.ver">版本</th><th data-i18n="license.th.lic">许可</th><th style="text-align:end" data-i18n="license.th.src">出处</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="name">Linux 内核</td><td class="ver">7.2.5</td>
+          <td class="size">GPL-2.0 WITH Linux-syscall-note</td>
+          <td class="cmd"><a class="u" href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git" target="_blank" rel="noopener">git.kernel.org ↗</a></td>
+        </tr>
+        <tr>
+          <td class="name">BusyBox</td><td class="ver">静态编译</td>
+          <td class="size">GPL-2.0</td>
+          <td class="cmd"><a class="u" href="https://busybox.net/" target="_blank" rel="noopener">busybox.net ↗</a></td>
+        </tr>
+        <tr>
+          <td class="name">GNU bash</td><td class="ver">5.3</td>
+          <td class="size">GPL-3.0-or-later</td>
+          <td class="cmd"><a class="u" href="https://www.gnu.org/software/bash/" target="_blank" rel="noopener">gnu.org/bash ↗</a></td>
+        </tr>
+        <tr>
+          <td class="name">nano</td><td class="ver">随 core.pm</td>
+          <td class="size">GPL-3.0-or-later</td>
+          <td class="cmd"><a class="u" href="https://www.nano-editor.org/" target="_blank" rel="noopener">nano-editor.org ↗</a></td>
+        </tr>
+        <tr>
+          <td class="name">curl</td><td class="ver">8.22.0</td>
+          <td class="size">curl（MIT/X 系）</td>
+          <td class="cmd"><a class="u" href="https://curl.se/" target="_blank" rel="noopener">curl.se ↗</a></td>
+        </tr>
+        <tr>
+          <td class="name">wget</td><td class="ver">1.6</td>
+          <td class="size">GPL-3.0-or-later</td>
+          <td class="cmd"><a class="u" href="https://www.gnu.org/software/wget/" target="_blank" rel="noopener">gnu.org/wget ↗</a></td>
+        </tr>
+        <tr>
+          <td class="name">OpenSSL</td><td class="ver">3.5.8</td>
+          <td class="size">Apache-2.0</td>
+          <td class="cmd"><a class="u" href="https://www.openssl.org/" target="_blank" rel="noopener">openssl.org ↗</a></td>
+        </tr>
+        <tr>
+          <td class="name">libxcrypt</td><td class="ver">4.4.36（构建期静态链）</td>
+          <td class="size">LGPL-2.1-or-later</td>
+          <td class="cmd"><a class="u" href="https://github.com/besser82/libxcrypt" target="_blank" rel="noopener">github.com/besser82/libxcrypt ↗</a></td>
+        </tr>
+        <tr>
+          <td class="name">opkg</td><td class="ver">0.8.0</td>
+          <td class="size">GPL-2.0</td>
+          <td class="cmd"><a class="u" href="https://git.yoctoproject.org/opkg/" target="_blank" rel="noopener">yoctoproject.org/opkg ↗</a></td>
+        </tr>
+        <tr>
+          <td class="name">SYSLINUX / ISOLINUX</td><td class="ver">6.04</td>
+          <td class="size">GPL-2.0-or-later</td>
+          <td class="cmd"><a class="u" href="https://wiki.syslinux.org/" target="_blank" rel="noopener">syslinux.org ↗</a></td>
+        </tr>
+        <tr>
+          <td class="name">GCC（gcc.pm）</td><td class="ver">13</td>
+          <td class="size">GPL-3.0-or-later WITH GCC-exception-3.1</td>
+          <td class="cmd"><a class="u" href="https://gcc.gnu.org/" target="_blank" rel="noopener">gcc.gnu.org ↗</a></td>
+        </tr>
+        <tr>
+          <td class="name">LLVM / clang（clang.pm）</td><td class="ver">18.1.3</td>
+          <td class="size">Apache-2.0 WITH LLVM-exception</td>
+          <td class="cmd"><a class="u" href="https://llvm.org/" target="_blank" rel="noopener">llvm.org ↗</a></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="hint" data-i18n-html="license.up.hint">内核树内部还包含若干子目录各自的许可（固件、设备树、工具等），
+      完整清单见内核源码里的 <code>COPYING</code> 与 <code>LICENSES/</code> 目录。</p>
+  </section>
+
+  <section data-reveal>
+    <h2 data-i18n="license.own.h2">Parlz 自有部分</h2>
+    <dl>
+      <dt data-i18n="license.own.lic">许可</dt>
+      <dd data-i18n-html="license.own.licval">GPL-2.0-or-later（源文件头 <code>SPDX-License-Identifier</code> 逐条可查）</dd>
+      <dt data-i18n="license.own.scope">范围</dt>
+      <dd data-i18n-html="license.own.scopeval"><code>userland/</code>（自研 sh / login / install / cpfs / mkfs / pm / ppm 等）、
+          <code>scripts/</code>、内核里的 Parlz 标识层（<code>include/linux/parlz*.h</code>、
+          <code>arch/x86/kernel/parlz.c</code>、<code>head64.c</code> 的一行挂钩）</dd>
+      <dt data-i18n="license.own.text">许可正文</dt>
+      <dd><a class="u" href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.html" target="_blank" rel="noopener">GPL-2.0 ↗</a> ·
+          <a class="u" href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/LICENSES/exceptions/Linux-syscall-note" target="_blank" rel="noopener">Linux-syscall-note ↗</a></dd>
+      <dt data-i18n="license.own.notes">发行说明</dt>
+      <dd data-i18n="license.own.notesval">内核与自有代码同以 GPL-2.0 发布；ISO/IMG 等二进制产物随附对应源码树，
+          获取方式与构建命令见首页。</dd>
+    </dl>
+  </section>
+
+  <section data-reveal>
+    <h2 data-i18n="license.ref.h2">引用</h2>
+    <dl>
+      <dt data-i18n="license.ref.kernel">内核基座</dt>
+      <dd data-i18n="license.ref.kernelval">Linux 7.2.5 —— 就地改造，不另建参考实现</dd>
+      <dt data-i18n="license.ref.userland">用户空间</dt>
+      <dd data-i18n-html="license.ref.userlandval">BusyBox（init/PID 1、ash、applet）+ GNU bash（交互 shell）+ nano（编辑器，随 <code>core.pm</code>）</dd>
+      <dt data-i18n="license.ref.net">网络与加密</dt>
+      <dd data-i18n="license.ref.netval">curl / wget 静态链接 OpenSSL 3.5.8</dd>
+      <dt data-i18n="license.ref.boot">引导</dt>
+      <dd data-i18n-html="license.ref.bootval">SYSLINUX 的 <code>mbr.bin</code>（LBA 0）+ VBR + ISOLINUX（El Torito）</dd>
+      <dt data-i18n="license.ref.pm">包管理</dt>
+      <dd data-i18n-html="license.ref.pmval">自有 <code>pm</code>（兼容上游 feed 索引格式）+ 上游 opkg 作为参照</dd>
+      <dt data-i18n="license.ref.toolchain">工具链包</dt>
+      <dd data-i18n-html="license.ref.toolchainval">GCC 13（<code>gcc.pm</code>）、LLVM/clang 18.1.3（<code>clang.pm</code>）</dd>
+    </dl>
+  </section>
+
+  <footer>
+    <span>© JGZ_YES &amp; ParlzOS
+      (<a class="u" href="mailto:jgzyes@parlz.com">jgzyes@parlz.com</a>,
+       <a class="u" href="mailto:os@parlz.com">os@parlz.com</a>)</span>
+  </footer>
+
+</main>
+<script src="i18n.js"></script>
+<script src="settings.js"></script>
+<script src="app.js"></script>
+<script src="router.js"></script>
+</body>
+</html>

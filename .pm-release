@@ -1,0 +1,7 @@
+# 由 scripts/make-release.sh 生成 —— PM(Parlz 包管理器)自己的版本号
+# 格式: 组件+大.小-阶段+第几版   阶段 R=RELEASE RC=RC B=BETA A=ALPHA
+PM_MAJOR="1"
+PM_MINOR="1"
+PM_TYPE="RC"
+PM_N="1"
+PM_VERSION_ID="pm+1.1-RC+1"

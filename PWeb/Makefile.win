@@ -1,0 +1,37 @@
+# PWeb Windows build via MinGW cross-compiler (GCC 4.9+)
+# Build: mingw32-make -f Makefile.win
+# Or:    F:PathMinGW64inmingw32-make.exe -f Makefile.win
+
+CC   ?= x86_64-w64-mingw32-gcc
+CINC ?= -I F:/Path/MinGW64/x86_64-w64-mingw32/include
+CFLAGS = -std=c11 -O1 -Wall -Wno-unused-parameter $(CINC)
+LIBS   = -lws2_32
+
+# Optional TLS client for proxy_pass https:// (defaults off, zero-dep build).
+#   SSL=1 mingw32-make -f Makefile.win   ->  links OpenSSL from C:/msys64/ucrt64
+# OpenSSL must be ABI-compatible; with the MinGW ABI mismatch the code still
+# compiles behind PWEB_SSL but may fail to link -- the default build is unaffected.
+ifeq ($(SSL),1)
+CFLAGS += -DPWEB_SSL -I C:/msys64/ucrt64/include
+LIBS   += -LC:/msys64/ucrt64/lib -lssl -lcrypto
+endif
+
+SRCS   := _port_main.c _port_conn.c _port_config.c _port_http_parser.c _port_handlers.c _port_util.c _port_mime.c _port_log.c _win_stubs.c
+OBJS   := $(SRCS:.c=.o)
+TARGET := pweb.exe
+
+.PHONY: all clean run
+
+all: $(TARGET)
+
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LIBS)
+
+%.o: %.c pweb.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+run: $(TARGET)
+	./$(TARGET) pweb.conf
+
+clean:
+	del /Q $(OBJS) $(TARGET) 2>nul

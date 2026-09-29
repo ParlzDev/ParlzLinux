@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>parlz — Linux 7.2.5 就地改造的操作系统</title>
+<meta name="description" content="ParlzOS：在 Linux 7.2.5 源码上就地改造的操作系统内核，配静态 BusyBox 用户空间、自研安装器与 pm 包管理器。">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23000'/><rect x='3' y='4' width='2' height='8' fill='%2300e08a'/></svg>">
+<script src="boot.js"></script>
+<!-- 字体一律**非阻塞**加载：那两份 result.css（198 = 47.7 KB、184 = 49.3 KB，各 170 多个
+     unicode-range 分片）用 @import 挂在 style.css 之前会**卡住整屏首次绘制**，慢网络上就是
+     白屏几秒。media="print" 让它不参与挡渲染，到货后用 onload 把 media 切回 all 换上字体。
+     挡在前面的是 style.css（22 KB），内容先用 --ui/--mono 里的系统字体画出来。 -->
+<link rel="preconnect" href="https://fontsapi.zeoseven.com" crossorigin>
+<link rel="stylesheet" href="https://fontsapi.zeoseven.com/198/main/result.css" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="style.css">
+<!-- 只有首页这块代码框用它（纯英文字体）：zeoseven 的 LXGW 975 Yuan SC 400W -->
+<link rel="stylesheet" href="https://fontsapi.zeoseven.com/184/main/result.css" media="print" onload="this.media='all'">
+<style>
+.codebox .code { font-family: "LXGW 975 Yuan SC 400W", var(--mono); font-weight: normal; }
+</style>
+</head>
+<body data-page="index">
+<div id="spot" aria-hidden="true"></div>
+<main>
+
+  <div class="top">
+    <div class="brand">parlz</div>
+    <nav class="nav">
+      <a href="index.html" aria-current="page" data-i18n="nav.index">首页</a>
+      <a href="packages.html" data-i18n="nav.packages">软件包</a>
+      <a href="download.html" data-i18n="nav.download">下载</a>
+      <a href="license.html" data-i18n="nav.licenses">许可证</a>
+      <a href="git.html" data-i18n="nav.git">仓库</a>
+      <a href="sim.html" data-i18n="nav.sim">模拟机</a>
+      <span class="langbox"><select class="lang" id="lang" aria-label="切换语言" data-i18n-attr="aria-label:nav.lang">
+        <option value="en-US">English</option>
+        <option value="zh-CN">简体中文</option>
+        <option value="zh-Hant">繁體中文</option>
+        <option value="pt">Português</option>
+        <option value="fr">Français</option>
+        <option value="es">Español</option>
+        <option value="id">Bahasa Indonesia</option>
+        <option value="hi">हिन्दी</option>
+        <option value="bn">বাংলা</option>
+        <option value="ar">العربية</option>
+        <option value="ur">اردو</option>
+      </select></span>
+      <button class="theme" id="theme" type="button" aria-label="切换明暗主题" data-i18n="nav.theme" data-i18n-attr="aria-label:theme.aria">主题</button>
+    </nav>
+  </div>
+
+  <div class="hero">
+    <h1 id="word">parlz<span class="cursor" aria-hidden="true"></span></h1>
+    <p class="lede" data-reveal style="--d:.35s" data-i18n-html="index.lede">在 <a class="u" href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git" target="_blank" rel="noopener"><b>Linux 7.2.5</b></a> 源码上就地改造的操作系统：
+    内核自带 Parlz 标识层，用户空间是静态 BusyBox 加自研的 sh / login / install / pm。
+    装上硬盘能自举，也能把裁掉的命令从包装回来。</p>
+
+    <div class="codebox" data-reveal style="--d:.5s">
+      <div class="cb-head"><span class="cb-dot" aria-hidden="true"></span><span id="codehead">hello.py  ·  Python  ·  python3 hello.py</span></div>
+      <!-- 里面先烘一段静态代码：万一 codeshow.js 没加载/被拦，框里也有东西，不是空的 -->
+      <pre class="code" id="code" aria-label="Hello World 的四种写法（Python / C / Go / Rust）">#!/usr/bin/env python3
+# hello.py - the first program on ParlzOS
+
+def main():
+    print("Hello, World from ParlzOS!")
+
+if __name__ == "__main__":
+    main()</pre>
+    </div>
+    <div class="hintline" style="margin-top:10px"><a class="u" href="sim.html" data-i18n="index.simLink">打开整页模拟机（nano / less / top 真能用） →</a></div>
+  </div>
+
+  <section data-reveal>
+    <h2 data-i18n="index.dl.h2">下载</h2>
+    <div class="dl">
+      <a href="downloads/parlz-rc.0.1-20260927-190002-install.iso" download>
+        <span class="kind">ISO</span>
+        <span class="meta" data-i18n-html="index.iso.meta">装机盘 · VMware / 真机挂载引导，空盘自动装盘，屏与串口双路输出<br>
+          sha256 6f237d8e…fadac9f</span>
+        <span class="size">150.7 MiB ↓</span>
+      </a>
+      <a href="downloads/parlz-rc.0.1-20260927-190002-installed-disk.img" download>
+        <span class="kind">IMG</span>
+        <span class="meta" data-i18n-html="index.img.meta">装好的整盘（分区 2 是 ext2 根）· QEMU 用 virtio 直接挂：
+          -drive file=…img,if=virtio · 首启会要求设用户名/密码<br>
+          sha256 d5435dba…32f70776</span>
+        <span class="size">512 MiB ↓</span>
+      </a>
+    </div>
+    <p class="hint" data-i18n-html="index.dl.hint">版本 CST+0800+20260927-190002+jgzyes@parlz.com+rc.0.1-F\V ·
+      也可以自己出图：scripts/make-release.sh rc 0 1</p>
+    <p class="hint" style="margin-top:8px"><a class="u" href="download.html" data-i18n="index.dl.all">全部下载（含四个 .pm 与校验） →</a></p>
+  </section>
+
+  <section data-reveal>
+    <h2 data-i18n="index.ver.h2">版本</h2>
+    <dl>
+      <dt>release id</dt>
+      <dd>CST+0800+20260927-190002+jgzyes@parlz.com+rc.0.1-F\V</dd>
+      <dt>uname -r</dt>
+      <dd>7.2.5-CST+0800+20260927-190002+jgzyes@parlz.com+rc.0.1-F\V</dd>
+      <dt>stage</dt>
+      <dd>rc 0.1 · builder jgzyes@parlz.com · 2026-09-27 19:00:02 CST</dd>
+      <dt data-i18n="index.ver.boot">引导</dt>
+      <dd>SeaBIOS → MBR → syslinux VBR → vmlinuz(initramfs) → ext2 根 → pivot_root</dd>
+    </dl>
+  </section>
+
+  <section data-reveal>
+    <h2 data-i18n="index.pm.h2">包管理器</h2>
+    <dl>
+      <dt>feed</dt>
+      <dd><code id="feed">/feed</code> <button class="copy" id="copyfeed" type="button" data-i18n="pkg.copy">copy</button></dd>
+      <dt data-i18n="index.pm.usage">用法</dt>
+      <dd><code>/bin/busybox echo &lt;feed&gt; &gt; /etc/pm/feeds.conf</code> <span data-i18n="index.pm.usage.after">之后 pm available / pm install core</span></dd>
+    </dl>
+    <p class="hint" style="margin-top:14px"><a class="u" href="packages.html" data-i18n="index.pm.browse">浏览包 →</a></p>
+  </section>
+
+  <div class="ticker" aria-hidden="true">
+    <div id="tick"></div>
+  </div>
+
+  <footer>
+    <span>© JGZ_YES &amp; ParlzOS
+      (<a class="u" href="mailto:jgzyes@parlz.com">jgzyes@parlz.com</a>,
+       <a class="u" href="mailto:os@parlz.com">os@parlz.com</a>)</span>
+  </footer>
+
+</main>
+<script src="i18n.js"></script>
+<script src="settings.js"></script>
+<script src="app.js"></script>
+<script src="codeshow.js"></script>
+<script src="router.js"></script>
+</body>
+</html>

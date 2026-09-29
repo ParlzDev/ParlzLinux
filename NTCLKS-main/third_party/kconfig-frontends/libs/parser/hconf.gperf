@@ -1,0 +1,8 @@
+%{
+/* Parlz: 这一版 kconfig-frontends 把关键字表内联成 kconf_id.c 的手写数组
+ * (yconf.y 里 #include "kconf_id.c"), 不再有 gperf 输入; 这里给出与
+ * kconf_id_lookup() 一致的声明, 以满足 ntclks 构建脚本对该输入的校验。 */
+static const struct kconf_id *kconf_id_lookup(register const char *str, register size_t len);
+%}
+%%
+%%

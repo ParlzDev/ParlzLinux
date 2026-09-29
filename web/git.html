@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>git — parlz</title>
+<meta name="description" content="ParlzOS 自托管 Git 仓库：克隆地址、仓库里有什么、怎么发布更新、上游与许可。">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23000'/><rect x='3' y='4' width='2' height='8' fill='%2300e08a'/></svg>">
+<script src="boot.js"></script>
+<!-- 全站字体**非阻塞**加载（原因见 index.html 那段注释：@import 会卡住手机端首次绘制） -->
+<link rel="preconnect" href="https://fontsapi.zeoseven.com" crossorigin>
+<link rel="stylesheet" href="https://fontsapi.zeoseven.com/198/main/result.css" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-page="git">
+<div id="spot" aria-hidden="true"></div>
+<main>
+
+  <div class="top">
+    <div class="brand">parlz</div>
+    <nav class="nav">
+      <a href="index.html" data-i18n="nav.index">首页</a>
+      <a href="packages.html" data-i18n="nav.packages">软件包</a>
+      <a href="download.html" data-i18n="nav.download">下载</a>
+      <a href="license.html" data-i18n="nav.licenses">许可证</a>
+      <a href="git.html" aria-current="page" data-i18n="nav.git">仓库</a>
+      <a href="sim.html" data-i18n="nav.sim">模拟机</a>
+      <span class="langbox"><select class="lang" id="lang" aria-label="切换语言" data-i18n-attr="aria-label:nav.lang">
+        <option value="en-US">English</option>
+        <option value="zh-CN">简体中文</option>
+        <option value="zh-Hant">繁體中文</option>
+        <option value="pt">Português</option>
+        <option value="fr">Français</option>
+        <option value="es">Español</option>
+        <option value="id">Bahasa Indonesia</option>
+        <option value="hi">हिन्दी</option>
+        <option value="bn">বাংলা</option>
+        <option value="ar">العربية</option>
+        <option value="ur">اردو</option>
+      </select></span>
+      <button class="theme" id="theme" type="button" aria-label="切换明暗主题" data-i18n="nav.theme" data-i18n-attr="aria-label:theme.aria">主题</button>
+    </nav>
+  </div>
+
+  <div class="hero">
+    <h1 id="word">git<span class="cursor" aria-hidden="true"></span></h1>
+    <p class="lede" data-reveal style="--d:.3s" data-i18n="git.lede">自己托管的源码仓库，不挂第三方平台。</p>
+  </div>
+
+  <section data-reveal>
+    <h2 data-i18n="git.repo.h2">仓库</h2>
+    <table>
+      <thead>
+        <tr>
+          <th data-i18n="git.th.repo">名称</th>
+          <th data-i18n="git.th.what">内容</th>
+          <th class="ver" data-i18n="git.th.branch">分支</th>
+          <th class="ver" data-i18n="git.th.rel">最新</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="name">parlz.git</td>
+          <td data-i18n-html="git.what">就地改造的 <code>linux-7.2.5/</code> 内核树、<code>userland/</code>（56 个 .c：sh / login / install / cpfs / mkfs / ifc / pm 等）、<code>scripts/</code>（86 个 .sh + 30 个 .py 构建与验收）、<code>web/</code> 本站与模拟机，以及 <code>NTCLKS-main/</code> 那条 Ring-0 支路</td>
+          <td class="ver">main</td>
+          <td class="ver">rc.0.1</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="hint" data-i18n-html="git.status"><b>只读镜像</b>：谁都能 clone/fetch，推送只走服务器本机或 SSH。两个地址指向同一份裸库 —— <code>git.os.parlz.com</code> 子域与服务端 <code>/git/</code> 那条 location 真正上线之前，clone 是连不上的；这里列的是待上线的地址，不是坏链接找借口。</p>
+  </section>
+
+  <section data-reveal style="--d:.1s">
+    <h2 data-i18n="git.clone.h2">克隆</h2>
+    <p class="feedline">
+      <code id="clone-main">https://www.parlz.com/git/parlz.git</code>
+      <button class="copy" id="copy-clone-main" type="button" data-i18n="pkg.copy">复制</button>
+    </p>
+    <p class="feedline">
+      <code id="clone-sub">https://git.os.parlz.com/parlz.git</code>
+      <button class="copy" id="copy-clone-sub" type="button" data-i18n="pkg.copy">复制</button>
+    </p>
+    <pre style="margin-top:16px">$ git clone https://www.parlz.com/git/parlz.git
+$ cd parlz &amp;&amp; git log --oneline -5
+$ git tag -l                          <span class="c"># 发布号与 /etc/parlz-release 同源</span>
+$ sh scripts/build-2404.sh            <span class="c"># 全链构建（WSL Ubuntu-24.04）</span></pre>
+  </section>
+
+  <section data-reveal style="--d:.15s">
+    <h2 data-i18n="git.push.h2">发布 / 更新</h2>
+    <pre><span class="c"># 构建机 → 服务器（SSH，仅此一条写入路径）</span>
+$ git push --mirror ssh://jgzyes@git.os.parlz.com/srv/git/parlz.git
+$ git update-server-info              <span class="c"># 服务器上刷新仓库信息</span></pre>
+    <p class="hint" data-i18n="git.push.note">产物（ISO / IMG / .pm）不进仓库：它们走本站的下载与 feed，仓库里只放源码与脚本。</p>
+  </section>
+
+  <section data-reveal style="--d:.2s">
+    <h2 data-i18n="git.up.h2">上游与许可</h2>
+    <p class="hint" data-i18n-html="git.up.note">内核基座是 <a class="u" href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git" target="_blank" rel="noopener">Linux 7.2.5</a>（就地改造，不另建参考实现）；Parlz 自有部分是 <b>GPL-2.0-or-later</b>，其余上游组件逐项列在 <a href="license.html">许可证</a> 页。发布号 <code>CST+0800+20260927-190002+jgzyes@parlz.com+rc.0.1-F\V</code>。</p>
+  </section>
+
+  <footer>
+    <span>© JGZ_YES &amp; ParlzOS
+      (<a class="u" href="mailto:jgzyes@parlz.com">jgzyes@parlz.com</a>,
+       <a class="u" href="mailto:os@parlz.com">os@parlz.com</a>)</span>
+  </footer>
+
+</main>
+<script src="i18n.js"></script>
+<script src="settings.js"></script>
+<script src="app.js"></script>
+<script src="router.js"></script>
+</body>
+</html>

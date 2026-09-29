@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>simulator — parlz</title>
+<meta name="description" content="整页的 Parlz 模拟机：真 VFS、真 parlz-sh 与 bash、真装包，全屏程序（nano / less / top / watch）也真能用。">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23000'/><rect x='3' y='4' width='2' height='8' fill='%2300e08a'/></svg>">
+<script src="boot.js"></script>
+<!-- 全站字体**非阻塞**加载（原因见 index.html 那段注释：@import 会卡住手机端首次绘制）。
+     这一页更要紧：终端要等 system.js/term.js 起来才有内容，字体绝不能排在它前面挡渲染。 -->
+<link rel="preconnect" href="https://fontsapi.zeoseven.com" crossorigin>
+<link rel="stylesheet" href="https://fontsapi.zeoseven.com/198/main/result.css" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="simpage" data-page="sim">
+<div id="spot" aria-hidden="true"></div>
+<main>
+
+  <div class="top">
+    <div class="brand">parlz</div>
+    <nav class="nav">
+      <a href="index.html" data-i18n="nav.index">首页</a>
+      <a href="packages.html" data-i18n="nav.packages">软件包</a>
+      <a href="download.html" data-i18n="nav.download">下载</a>
+      <a href="license.html" data-i18n="nav.licenses">许可证</a>
+      <a href="git.html" data-i18n="nav.git">仓库</a>
+      <a href="sim.html" aria-current="page" data-i18n="nav.sim">模拟机</a>
+      <span class="langbox"><select class="lang" id="lang" aria-label="切换语言" data-i18n-attr="aria-label:nav.lang">
+        <option value="en-US">English</option>
+        <option value="zh-CN">简体中文</option>
+        <option value="zh-Hant">繁體中文</option>
+        <option value="pt">Português</option>
+        <option value="fr">Français</option>
+        <option value="es">Español</option>
+        <option value="id">Bahasa Indonesia</option>
+        <option value="hi">हिन्दी</option>
+        <option value="bn">বাংলা</option>
+        <option value="ar">العربية</option>
+        <option value="ur">اردو</option>
+      </select></span>
+      <button class="theme" id="theme" type="button" aria-label="切换明暗主题" data-i18n="nav.theme" data-i18n-attr="aria-label:theme.aria">主题</button>
+    </nav>
+  </div>
+
+  <div id="screen" class="screen" tabindex="0" role="application"
+       aria-label="Parlz 模拟机终端" data-i18n-attr="aria-label:sim.title">loading… 正在装载这台机器（模拟机的本体是一次性下载的，慢网络多等几秒）</div>
+
+  <div class="simfoot hintline" data-i18n-html="sim.hint">敲 help 看命令 · 全屏程序：nano 文件（^O 保存、^X 退出）· less 文件 · top · watch -n 1 命令 · ↑↓ 历史 · ^L 清屏</div>
+
+</main>
+<script src="i18n.js"></script>
+<script src="settings.js"></script>
+<script src="app.js"></script>
+<script src="system.js"></script>
+<script src="term.js"></script>
+<script src="sim.js"></script>
+<script src="router.js"></script>
+</body>
+</html>

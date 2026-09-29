@@ -1,0 +1,73 @@
+#!/bin/bash
+# 动态编译验证: 装 gcc/clang 包, 默认动态编译 C/C++, 产物直跑
+PASS=0; FAIL=0
+ok(){ [ "$1" = 0 ] && { PASS=$((PASS+1)); echo "  PASS: $2"; } || { FAIL=$((FAIL+1)); echo "  FAIL: $2"; }; }
+
+export LD_LIBRARY_PATH=/lib/toolchain:/opt/toolchain/gcc-15/lib:/opt/toolchain/llvm-21/lib
+export PATH=/usr/bin:/usr/sbin:/usr/local/bin:/bin:/sbin
+# 默认非 PIE 动态(PIE 动态产物在本内核下 segfault, 见 init.c 注释)
+export CFLAGS="-no-pie"
+export CXXFLAGS="-no-pie"
+export LDFLAGS="-no-pie"
+
+echo "=== 装 gcc + clang ==="
+pm install gcc; ok $? "pm install gcc"
+pm install clang; ok $? "pm install clang"
+
+# C 源码: echo 换行保证非 0 字节(宿主 WSL 中间层吞 heredoc 的坑)
+echo '#include <stdio.h>
+int main(){ printf("DYN_C_OK\n"); return 0; }' > /tmp/dyn_c.c
+echo '#include <iostream>
+int main(){ std::cout << "DYN_CXX_OK" << std::endl; return 0; }' > /tmp/dyn_cpp.cpp
+
+echo "=== gcc 默认动态编译 C (裸命令, 无 -I -B -L -static) ==="
+gcc -o /tmp/d1 /tmp/dyn_c.c 2>/tmp/d1.err
+G1=$?
+/tmp/d1 > /tmp/d1.out 2>&1
+G2=$?
+echo "  产物: $(file /tmp/d1 2>/dev/null | grep -o 'dynamically linked\|statically linked')"
+if [ $G1 -eq 0 ] && [ $G2 -eq 0 ] && grep -q DYN_C_OK /tmp/d1.out; then
+  ok 0 "gcc 默认动态编译+运行 C"
+else
+  ok 1 "gcc 动态编译 C (linkrc=$G1 runrc=$G2; err=$(head -2 /tmp/d1.err | tr '\n' ';'))"
+fi
+# 产物必须动态(用户要的就是动态编译)
+case "$(file /tmp/d1 2>/dev/null)" in
+  *dynamically*) ok 0 "gcc 产物为动态 ELF";;
+  *) ok 1 "gcc 产物非动态";;
+esac
+
+echo "=== g++ 默认动态编译 C++ ==="
+g++ -o /tmp/d2 /tmp/dyn_cpp.cpp 2>/tmp/d2.err
+X1=$?
+/tmp/d2 > /tmp/d2.out 2>&1
+X2=$?
+echo "  产物: $(file /tmp/d2 2>/dev/null | grep -o 'dynamically linked\|statically linked')"
+if [ $X1 -eq 0 ] && [ $X2 -eq 0 ] && grep -q DYN_CXX_OK /tmp/d2.out; then
+  ok 0 "g++ 默认动态编译+运行 C++"
+else
+  ok 1 "g++ 动态编译 C++ (linkrc=$X1 runrc=$X2; err=$(head -2 /tmp/d2.err | tr '\n' ';'))"
+fi
+
+echo "=== clang 默认动态编译 C ==="
+clang -o /tmp/d3 /tmp/dyn_c.c 2>/tmp/d3.err
+L1=$?
+/tmp/d3 > /tmp/d3.out 2>&1
+L2=$?
+echo "  产物: $(file /tmp/d3 2>/dev/null | grep -o 'dynamically linked\|statically linked')"
+if [ $L1 -eq 0 ] && [ $L2 -eq 0 ] && grep -q DYN_C_OK /tmp/d3.out; then
+  ok 0 "clang 默认动态编译+运行 C"
+else
+  ok 1 "clang 动态编译 C (linkrc=$L1 runrc=$L2; err=$(head -2 /tmp/d3.err | tr '\n' ';'))"
+fi
+
+echo "=== 卸载 ==="
+pm remove gcc; ok $? "pm remove gcc"
+pm remove clang; ok $? "pm remove clang"
+LEFT=0
+[ -e /opt/toolchain/gcc-15/bin/gcc ] && LEFT=1
+[ -e /opt/toolchain/llvm-21/bin/clang ] && LEFT=1
+[ $LEFT -eq 0 ] && ok 0 "卸载后包内二进制已移除" || ok 1 "卸载后包内二进制仍在"
+
+echo "=== 汇总: PASS=$PASS FAIL=$FAIL ==="
+[ "$FAIL" -eq 0 ] && echo "DYN_ALL_OK" || echo "DYN_FAIL"

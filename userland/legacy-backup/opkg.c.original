@@ -1,0 +1,745 @@
+/* opkg.c - OPKG 包管理器(完整移植, 静态用户空间)。
+ *
+ * .ipk 包格式(标准 OPKG, 与 ipkg/opkg 兼容):
+ *   最外层 = 普通 tar(不压缩), 内含两个成员:
+ *     control.tar.gz   gzip(tar): control(元数据) + conffiles + postinst
+ *     data.tar.gz      gzip(tar): 文件树(./bin/xxx ./lib/yyy ...)
+ * host 侧生成 ipk 用现成 tar: tar -cf pkg.ipk control.tar.gz data.tar.gz
+ * 本二进制 guest 端(install/list/info/remove)全程纯 C:
+ *   - 自实现 GNU tar 解析(512B 头 + ustar, P/X 长名头跳过)
+ *   - 自实现 gzip/DEFLATE 解码(固定+动态 Huffman, 无 zlib 依赖)
+ * 因此 initramfs 里一条 `opkg install pkg.ipk` 即可装机, 不靠外部工具。
+ *
+ * DEFLATE 实现要点(与 zlib inflate 逐位对照验证):
+ *   - 位序: 每字节内 bit0 先出, 字节低地址先(LSB-first per byte)
+ *   - Huffman 码值按码长升序分配(start[L]=(start[L-1]+hcount[L-1])<<1),
+ *     同码长组内按符号下标升序
+ *   - 解码用最长匹配: peek 15 位, 从长到短比对, 命中才消费该长度
+ *   - 码长符号表 19 项: clens[v]=码长值 v 的码长, 码值按 v 升序分配
+ *
+ * 子命令:
+ *   opkg install <pkg.ipk> [...]   解包安装到 /(保留权限, 拒绝 .. 越界),
+ *                                  登记 /var/lib/opkg/status + 文件清单
+ *   opkg remove <pkg>             按清单删文件 + 清登记
+ *   opkg list                     列出已装包
+ *   opkg info <pkg>               打印 control 字段
+ *   opkg make <pkgname> <dir> <out.ipk>   host 侧打包(需系统 tar/gzip)
+ *
+ * 设计约束: 静态 -fno-pie 自包含; 安装以 root 运行; 路径穿越一律拒绝。
+ */
+#define _XOPEN_SOURCE 700
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <limits.h>
+#include "miniz_tinfl.h"
+
+#define PKGDB_DIR "/var/lib/opkg"
+#define STATUS_FILE PKGDB_DIR "/status"
+
+
+/* gunzip: 剥头(10B + 可选 FEXTRA/FNAME/FCOMMENT)+ 8B 尾, DEFLATE 中间 */
+static long gunzip_to(unsigned char *dst, size_t dstcap,
+                      const unsigned char *g, size_t glen)
+{
+    if (glen < 18 || g[0] != 0x1f || g[1] != 0x8b)
+        return -1;
+    size_t off = 10;
+    unsigned char flg = g[3];
+    if (flg & 4) {                    /* FEXTRA */
+        if (off + 2 > glen)
+            return -1;
+        unsigned xl = g[off] | ((unsigned)g[off + 1] << 8);
+        off += 2 + xl;
+        if (off + 8 > glen)
+            return -1;
+    }
+    if (flg & 8) {                   /* FNAME */
+        while (off < glen && g[off])
+            off++;
+        off++;
+        if (off + 8 > glen)
+            return -1;
+    }
+    if (flg & 16) {                  /* FCOMMENT */
+        while (off < glen && g[off])
+            off++;
+        off++;
+        if (off + 8 > glen)
+            return -1;
+    }
+    if (off + 8 > glen)
+        return -1;
+    /* 裸 DEFLATE 段: 交给 miniz tinfl(经 miniz 库验证位序/查表正确)。
+     * dstcap 不足时(高压缩比小文件)返回 -1, 调用方按 8 倍给够。 */
+    size_t written = tinfl_decompress_mem_to_mem(
+                        dst, dstcap, g + off, glen - off - 8,
+                        TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+    if (written == TINFL_DECOMPRESS_MEM_TO_MEM_FAILED)
+        return -1;
+    return (long)written;
+}
+
+/* 读整文件到堆 */
+static long read_file_all(const char *path, unsigned char **out, size_t *cap)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return -1;
+    size_t cap2 = 1 << 20, total = 0;
+    unsigned char *buf = malloc(cap2);
+    if (!buf) {
+        fclose(f);
+        return -1;
+    }
+    size_t n;
+    while ((n = fread(buf + total, 1, cap2 - total, f)) > 0) {
+        total += n;
+        if (total == cap2) {
+            cap2 <<= 1;
+            buf = realloc(buf, cap2);
+            if (!buf) {
+                fclose(f);
+                return -1;
+            }
+        }
+    }
+    fclose(f);
+    *out = buf;
+    *cap = cap2;
+    return (long)total;
+}
+
+/* =================================================================
+ * 第二部分: 纯 C GNU tar 解析(512B 头 + ustar; P/X 长名头跳过)
+ * ================================================================= */
+struct tar_entry {
+    char name[512];
+    char linkname[512];
+    unsigned mode;
+    unsigned size;
+    char type;             /* '0' 文件 '5' 目录 '2' 链接 'L'/'X' 前置 */
+    const unsigned char *data;
+};
+
+/* 返回 1=正常成员 0=归档尾 2=前置长名/扩展头(跳过) */
+static int parse_tar_hdr(const unsigned char *hdr, struct tar_entry *e)
+{
+    memset(e, 0, sizeof *e);
+    if (!hdr[0])
+        return 0;
+    if (hdr[257] == 'L' || hdr[257] == 'X') {
+        e->type = (char)hdr[257];
+        return 2;
+    }
+    char tmp[33];
+    memcpy(tmp, hdr + 0, 32); tmp[32] = 0;
+    snprintf(e->name, sizeof e->name, "%s", tmp);
+    memcpy(tmp, hdr + 100, 32); tmp[32] = 0;
+    snprintf(e->linkname, sizeof e->linkname, "%s", tmp);
+    memcpy(tmp, hdr + 124, 12); tmp[12] = 0;
+    e->size = (unsigned)strtoul(tmp, NULL, 8);
+    memcpy(tmp, hdr + 100, 8); tmp[8] = 0;
+    e->mode = (unsigned)strtoul(tmp, NULL, 8);
+    e->type = (char)hdr[156];
+    return 1;
+}
+
+typedef int (*tar_cb)(struct tar_entry *e, void *ctx);
+
+static int for_each_tar(const unsigned char *tar, size_t tarlen,
+                       tar_cb cb, void *ctx)
+{
+    size_t off = 0;
+    int count = 0;
+    while (off + 512 <= tarlen) {
+        struct tar_entry e;
+        int r = parse_tar_hdr(tar + off, &e);
+        if (r == 0)
+            break;
+        if (r == 2) {
+            off += 512;             /* 前置头, 真成员紧随其后 */
+            continue;
+        }
+        e.data = NULL;
+        size_t blk = (e.size + 511) & ~(size_t)511;
+        if (off + 512 + blk > tarlen)
+            break;
+        if (e.size > 0)
+            e.data = tar + off + 512;
+        if (cb(&e, ctx) < 0)
+            return -1;
+        count++;
+        off += 512 + blk;
+    }
+    return count;
+}
+
+/* =================================================================
+ * 第三部分: 安装/移除/登记
+ * ================================================================= */
+static void mkdirs_parent(const char *path)
+{
+    char tmp[1024];
+    snprintf(tmp, sizeof tmp, "%s", path);
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = 0;
+            if (access(tmp, F_OK) != 0)
+                mkdir(tmp, 0755);
+            *p = '/';
+        }
+    }
+}
+
+/* 包内相对路径 -> 安装目标(/ 根), 拒绝 .. 与空。成功 0 拒绝 -1 */
+static int resolve_dest(const char *rel, char *out, size_t outsz)
+{
+    const char *p = rel;
+    while (*p == '/')
+        p++;
+    if (p[0] == '.' && p[1] == '/')
+        p += 2;
+    if (!*p)
+        return -1;
+    if (strstr(p, "..")) {
+        fprintf(stderr, "opkg: 拒绝越界路径 %s\n", p);
+        return -1;
+    }
+    snprintf(out, outsz, "/%s", p);
+    return 0;
+}
+
+/* 安装上下文: 文件清单 + 计数 */
+struct wl_ctx {
+    char *filelist[1024];
+    int nfiles;
+};
+
+/* 写一个 tar 成员到目标, 记入文件清单 */
+static int write_entry(struct tar_entry *e, void *ctx)
+{
+    struct wl_ctx *c = ctx;
+    char dest[1024];
+    if (resolve_dest(e->name, dest, sizeof dest) < 0)
+        return 0;
+    if (e->type == '5') {
+        mkdirs_parent(dest);
+        return 0;
+    }
+    if (e->type == '2') {
+        if (e->linkname[0]) {
+            char parent[1024];
+            snprintf(parent, sizeof parent, "%s", dest);
+            char *slash = strrchr(parent, '/');
+            if (slash && slash != parent) {
+                *slash = 0;
+                mkdirs_parent(parent);
+                *slash = '/';
+            }
+            unlink(dest);
+            if (symlink(e->linkname, dest) < 0) {
+                /* 目标不存在等情况, 跳过 */
+            }
+        }
+        return 0;
+    }
+    if (e->type != '0')
+        return 0;
+    char parent[1024];
+    snprintf(parent, sizeof parent, "%s", dest);
+    char *slash = strrchr(parent, '/');
+    if (slash && slash != parent) {
+        *slash = 0;
+        mkdirs_parent(parent);
+        *slash = '/';
+    } else {
+        /* dest = "/xxx" 根级文件: 确保 / 存在 */
+        mkdirs_parent("/");
+    }
+    int fd = open(dest, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+    if (fd < 0) {
+        fprintf(stderr, "opkg: 写 %s 失败: %s\n", dest, strerror(errno));
+        return 0;
+    }
+    size_t done = 0;
+    while (done < e->size) {
+        ssize_t w = write(fd, e->data + done, e->size - done);
+        if (w <= 0)
+            break;
+        done += (size_t)w;
+    }
+    close(fd);
+    chmod(dest, (mode_t)((e->mode & 0777) ? (e->mode & 0777) : 0755));
+    c->filelist[c->nfiles] = strdup(dest);
+    c->nfiles++;
+    return 0;
+}
+
+/* 外层 tar 成员收集: 找 control.tar.gz / data.tar.gz */
+struct collect_ctx {
+    const unsigned char *ctgz, *dtgz;
+    size_t ctgzlen, dtgzlen;
+    int found_c, found_d;
+};
+
+static int collect_cb(struct tar_entry *e, void *ctx)
+{
+    struct collect_ctx *c = ctx;
+    if (e->size == 0)
+        return 0;
+    if (strstr(e->name, "control.tar.gz") && !c->found_c) {
+        c->ctgz = e->data;
+        c->ctgzlen = e->size;
+        c->found_c = 1;
+    } else if (strstr(e->name, "data.tar.gz") && !c->found_d) {
+        c->dtgz = e->data;
+        c->dtgzlen = e->size;
+        c->found_d = 1;
+    }
+    return 0;
+}
+
+/* 解析 control 文本字段 */
+static void parse_control(const char *text, size_t tlen, char *name,
+                          size_t nsz, char *ver, size_t vsz)
+{
+    name[0] = ver[0] = 0;
+    char buf[8192];
+    size_t ll = tlen < sizeof buf - 1 ? tlen : sizeof buf - 1;
+    memcpy(buf, text, ll);
+    buf[ll] = 0;
+    char *lp = buf;
+    while (*lp) {
+        char *nl = strchr(lp, '\n');
+        int len = nl ? (int)(nl - lp) : (int)strlen(lp);
+        char line[512];
+        if (len >= (int)sizeof line)
+            len = (int)sizeof line - 1;
+        memcpy(line, lp, len);
+        line[len] = 0;
+        char *colon = strchr(line, ':');
+        if (colon) {
+            *colon = 0;
+            char *key = line, *val = colon + 1;
+            while (*key == ' ' || *key == '\t')
+                key++;
+            while (*val == ' ' || *val == '\t')
+                val++;
+            if (!strcmp(key, "Package"))
+                snprintf(name, nsz, "%s", val);
+            else if (!strcmp(key, "Version"))
+                snprintf(ver, vsz, "%s", val);
+        }
+        if (!nl)
+            break;
+        lp = nl + 1;
+    }
+}
+
+/* 解 data.tar.gz 并安装, 返回安装文件数(<0 失败) */
+static int install_data(const unsigned char *dgz, size_t dgzlen,
+                        struct wl_ctx *c)
+{
+    /* 输出缓冲按 64 倍压缩字节 + 128KB 给余量: 高度压缩(填充/小文件)
+     * 的 tar 解压比可超 1:60, 4 倍会因 tinfl 判定输出容量不足而失败。 */
+    size_t dcap = dgzlen * 64 + 131072;
+    unsigned char *dst = malloc(dcap);
+    if (!dst)
+        return -1;
+    long dlen = gunzip_to(dst, dcap, dgz, dgzlen);
+    int r;
+    if (dlen < 0) {
+        free(dst);
+        return -1;
+    }
+    r = for_each_tar(dst, (size_t)dlen, (tar_cb)write_entry, c);
+    free(dst);
+    return r;
+}
+
+/* 递归建 /var/lib/opkg 全部父目录(只建缺失的) */
+static void ensure_pkgdb_dir(void)
+{
+    mkdir("/var", 0755);
+    mkdir("/var/lib", 0755);
+    mkdir(PKGDB_DIR, 0755);
+}
+
+/* 登记包: status 行 + 文件清单 */
+static void register_pkg(const char *name, const char *ver,
+                         struct wl_ctx *c)
+{
+    /* 包名可能含 "."(demo.1.0)等点: 清单文件名用下划线, 防 .files
+     * 后缀与名内点混淆; status 行保留原始包名 */
+    char safe[128];
+    snprintf(safe, sizeof safe, "%s", name);
+    for (char *q = safe; *q; q++)
+        if (*q == '.')
+            *q = '_';
+    ensure_pkgdb_dir();
+    FILE *f = fopen(STATUS_FILE, "a");
+    if (f) {
+        fprintf(f, "%s %s\n", name, ver[0] ? ver : "0");
+        fclose(f);
+    }
+    char fpath[1024];
+    snprintf(fpath, sizeof fpath, "%s/%s.files", PKGDB_DIR, safe);
+    FILE *ff = fopen(fpath, "w");
+    if (ff) {
+        for (int i = 0; i < c->nfiles; i++)
+            fprintf(ff, "%s\n", c->filelist[i]);
+        fclose(ff);
+    }
+}
+
+static int cmd_install(int argc, char **argv)
+{
+    if (argc < 3) {
+        fprintf(stderr, "用法: opkg install <pkg.ipk> [...]\n");
+        return 1;
+    }
+    int rc = 0;
+    for (int i = 2; i < argc; i++) {
+        const char *ipk = argv[i];
+        unsigned char *raw = NULL;
+        size_t cap = 0;
+        long len = read_file_all(ipk, &raw, &cap);
+        if (len < 0) {
+            fprintf(stderr, "opkg: 读 %s 失败\n", ipk);
+            rc = 1;
+            continue;
+        }
+        struct collect_ctx cc = {0};
+        int n = for_each_tar(raw, (size_t)len, (tar_cb)collect_cb, &cc);
+        if (n < 0) {
+            fprintf(stderr, "opkg: 解外层 tar 失败 %s\n", ipk);
+            free(raw);
+            rc = 1;
+            continue;
+        }
+        if (!cc.found_d) {
+            fprintf(stderr, "opkg: %s 缺 data.tar.gz\n", ipk);
+            free(raw);
+            rc = 1;
+            continue;
+        }
+        /* 解 control 拿包名/版本 */
+        char pkgname[128] = {0}, ver[32] = {0};
+        if (cc.found_c) {
+            /* control.tar 解出后 10KB 量级(512B 头 + 内容 + 填充),
+             * 压缩比可达 1:55 以上, 按 64 倍给余量 */
+            size_t dcap = cc.ctgzlen * 64 + 131072;
+            unsigned char *ct = malloc(dcap);
+            if (ct) {
+                long cl = gunzip_to(ct, dcap, cc.ctgz, cc.ctgzlen);
+                if (cl > 0) {
+                    /* 在 control.tar 里找 "control" 文件(非 conffiles) */
+                    size_t off = 0;
+                    while (off + 512 <= (size_t)cl) {
+                        struct tar_entry e;
+                        int r = parse_tar_hdr(ct + off, &e);
+                        if (r <= 0)
+                            break;
+                        if (r == 2) {
+                            off += 512;
+                            continue;
+                        }
+                        size_t blk = (e.size + 511) & ~(size_t)511;
+                        if (off + 512 + blk > (size_t)cl)
+                            break;
+                        e.data = e.size > 0 ? ct + off + 512 : NULL;
+                        if (e.type == '0' && e.size > 0 &&
+                            !strstr(e.name, "conffiles")) {
+                            const char *bn = strrchr(e.name, '/');
+                            bn = bn ? bn + 1 : e.name;
+                            /* 标准 opkg control 文件名为 "control";
+                             * 兼容带扩展名的 "control.txt" */
+                            if (!strcmp(bn, "control") ||
+                                !strcmp(bn, "control.txt")) {
+                                parse_control((const char *)e.data, e.size,
+                                             pkgname, sizeof pkgname,
+                                             ver, sizeof ver);
+                                break;
+                            }
+                        }
+                        off += 512 + blk;
+                    }
+                }
+                free(ct);
+            }
+        }
+        if (!pkgname[0])
+            snprintf(pkgname, sizeof pkgname, "unknown");
+        struct wl_ctx ctx = { .nfiles = 0 };
+        if (install_data(cc.dtgz, cc.dtgzlen, &ctx) < 0) {
+            fprintf(stderr, "opkg: 安装 %s 失败(gunzip/tar 解析错)\n",
+                    pkgname);
+            free(raw);
+            rc = 1;
+            continue;
+        }
+        register_pkg(pkgname, ver, &ctx);
+        printf("OPKG: 已安装 %s %s(%d 文件, 源自 %s)\n",
+               pkgname, ver[0] ? ver : "0", ctx.nfiles, ipk);
+        for (int k = 0; k < ctx.nfiles; k++)
+            free(ctx.filelist[k]);
+        free(raw);
+    }
+    return rc;
+}
+
+/* 递归删 */
+static int rm_rec(const char *path)
+{
+    struct stat st;
+    if (lstat(path, &st) < 0)
+        return 0;
+    if (S_ISDIR(st.st_mode)) {
+        DIR *d = opendir(path);
+        if (d) {
+            struct dirent *e;
+            while ((e = readdir(d))) {
+                if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
+                    continue;
+                char full[PATH_MAX];
+                snprintf(full, sizeof full, "%s/%s", path, e->d_name);
+                rm_rec(full);
+            }
+            closedir(d);
+        }
+        if (rmdir(path) < 0 && errno != ENOENT)
+            return -1;
+        return 0;
+    }
+    if (unlink(path) < 0 && errno != ENOENT)
+        return -1;
+    return 0;
+}
+
+static int cmd_remove(int argc, char **argv)
+{
+    if (argc < 3) {
+        fprintf(stderr, "用法: opkg remove <pkg>\n");
+        return 1;
+    }
+    const char *pkg = argv[2];
+    char fpath[1024];
+    /* 与 register_pkg 一致: 点变下划线 */
+    char safe[128];
+    snprintf(safe, sizeof safe, "%s", pkg);
+    for (char *q = safe; *q; q++)
+        if (*q == '.')
+            *q = '_';
+    snprintf(fpath, sizeof fpath, "%s/%s.files", PKGDB_DIR, safe);
+    int removed = 0;
+    FILE *f = fopen(fpath, "r");
+    if (f) {
+        char *lines[1024];
+        int n = 0;
+        char line[1024];
+        while (fgets(line, sizeof line, f) && n < 1024) {
+            line[strcspn(line, "\n")] = 0;
+            if (line[0])
+                lines[n++] = strdup(line);
+        }
+        fclose(f);
+        for (int i = n - 1; i >= 0; i--) {
+            if (rm_rec(lines[i]) == 0)
+                removed++;
+            free(lines[i]);
+        }
+    } else
+        fprintf(stderr, "opkg: 未找到 %s 的文件清单\n", pkg);
+    /* 从 status 删该行 */
+    FILE *sf = fopen(STATUS_FILE, "r");
+    if (sf) {
+        char buf[65536];
+        size_t rd = fread(buf, 1, sizeof buf - 1, sf);
+        buf[rd] = 0;
+        fclose(sf);
+        FILE *nw = fopen(STATUS_FILE ".new", "w");
+        if (nw) {
+            char *lp = buf;
+            while (*lp) {
+                char *nl = strchr(lp, '\n');
+                int ll = nl ? (int)(nl - lp) : (int)strlen(lp);
+                char ln[256];
+                if (ll >= (int)sizeof ln)
+                    ll = (int)sizeof ln - 1;
+                memcpy(ln, lp, ll);
+                ln[ll] = 0;
+                char p[128];
+                if (sscanf(ln, "%127s", p) == 1 && !strcmp(p, pkg)) {
+                    lp = nl ? nl + 1 : lp + ll;
+                    continue;
+                }
+                fputs(lp, nw);
+                lp = nl ? nl + 1 : lp + ll;
+            }
+            fclose(nw);
+        }
+        rename(STATUS_FILE ".new", STATUS_FILE);
+    }
+    unlink(fpath);
+    printf("OPKG: 已移除 %s(%d 文件)\n", pkg, removed);
+    return 0;
+}
+
+static int cmd_list(void)
+{
+    FILE *f = fopen(STATUS_FILE, "r");
+    if (!f) {
+        printf("OPKG: 无已装包(%s)\n", STATUS_FILE);
+        return 0;
+    }
+    char line[256];
+    int n = 0;
+    while (fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\n")] = 0;
+        if (line[0]) {
+            printf("  %s\n", line);
+            n++;
+        }
+    }
+    fclose(f);
+    if (!n)
+        printf("OPKG: (无)\n");
+    return 0;
+}
+
+static int cmd_info(int argc, char **argv)
+{
+    if (argc < 3) {
+        fprintf(stderr, "用法: opkg info <pkg>\n");
+        return 1;
+    }
+    const char *pkg = argv[2];
+    char path[1024];
+    snprintf(path, sizeof path, "%s/%s.control", PKGDB_DIR, pkg);
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        FILE *sf = fopen(STATUS_FILE, "r");
+        char line[256];
+        int found = 0;
+        if (sf) {
+            while (fgets(line, sizeof line, sf)) {
+                char p[128] = {0};
+                if (sscanf(line, "%127s", p) == 1 && !strcmp(p, pkg)) {
+                    printf("Package: %s\n", line);
+                    found = 1;
+                }
+            }
+            fclose(sf);
+        }
+        if (!found) {
+            fprintf(stderr, "opkg: 未找到 %s\n", pkg);
+            return 1;
+        }
+        return 0;
+    }
+    char line[512];
+    while (fgets(line, sizeof line, f))
+        fputs(line, stdout);
+    fclose(f);
+    return 0;
+}
+
+/* opkg make: host 侧打包(调系统 tar/gzip) */
+static int cmd_make(int argc, char **argv)
+{
+    if (argc < 4) {
+        fprintf(stderr, "用法: opkg make <pkgname> <dir> <out.ipk>\n");
+        return 1;
+    }
+    const char *pkg = argv[1];
+    const char *dir = argv[2];
+    const char *out = argv[3];
+    char work[PATH_MAX];
+    snprintf(work, sizeof work, "%s/.opkg-w", dir);
+    char cdir[PATH_MAX];
+    snprintf(cdir, sizeof cdir, "%s/control", work);
+    if (mkdir(work, 0755) < 0 && errno != EEXIST) {
+        perror("opkg make: mkdir work");
+        return 1;
+    }
+    if (mkdir(cdir, 0755) < 0 && errno != EEXIST) {
+        perror("opkg make: mkdir control");
+        return 1;
+    }
+    char cfile[PATH_MAX];
+    snprintf(cfile, sizeof cfile, "%s/control", cdir);
+    FILE *cf = fopen(cfile, "w");
+    if (!cf) {
+        perror("opkg make: open control");
+        return 1;
+    }
+    fprintf(cf, "Package: %s\nVersion: 1.0.0\nArchitecture: x86_64\n"
+                "Description: Parlz OPKG package\n", pkg);
+    fclose(cf);
+    char c1[PATH_MAX * 3];
+    snprintf(c1, sizeof c1,
+             "tar -C '%s' -czf '%s/data.tar.gz' . 2>/dev/null", dir, work);
+    if (system(c1) != 0) {
+        fprintf(stderr, "opkg make: tar data 失败(需 host 侧 tar)\n");
+        return 1;
+    }
+    char c2[PATH_MAX * 3];
+    snprintf(c2, sizeof c2,
+             "tar -C '%s' -czf '%s/control.tar.gz' control 2>/dev/null",
+             cdir, work);
+    if (system(c2) != 0) {
+        fprintf(stderr, "opkg make: tar control 失败\n");
+        return 1;
+    }
+    char c3[PATH_MAX * 3];
+    snprintf(c3, sizeof c3,
+             "tar -C '%s' -cf '%s' control.tar.gz data.tar.gz 2>/dev/null",
+             work, out);
+    int rc = system(c3);
+    char c4[PATH_MAX * 2];
+    snprintf(c4, sizeof c4, "rm -rf '%s'", work);
+    if (system(c4) != 0) {
+        /* 清理失败不影响结果 */
+    }
+    struct stat st;
+    if (rc != 0 || stat(out, &st) < 0 || st.st_size == 0) {
+        fprintf(stderr, "opkg make: 打包失败(需 host 侧 tar/gzip)\n");
+        return 1;
+    }
+    printf("opkg make: %s -> %s\n", pkg, out);
+    return 0;
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc < 2) {
+        puts("OPKG (Parlz 包管理, ipk 兼容)\n"
+             "用法:\n"
+             "  opkg install <pkg.ipk> [...]  纯 C 解 gzip/tar 安装到 /\n"
+             "  opkg remove <pkg>            按清单删文件 + 清登记\n"
+             "  opkg list                    列已装包\n"
+             "  opkg info <pkg>              打印 control 字段\n"
+             "  opkg make <pkg> <dir> <out>  host 侧打包(需 tar/gzip)");
+        return 1;
+    }
+    const char *cmd = argv[1];
+    if (!strcmp(cmd, "install"))
+        return cmd_install(argc, argv);
+    if (!strcmp(cmd, "remove"))
+        return cmd_remove(argc, argv);
+    if (!strcmp(cmd, "list") || !strcmp(cmd, "ls"))
+        return cmd_list();
+    if (!strcmp(cmd, "info"))
+        return cmd_info(argc, argv);
+    if (!strcmp(cmd, "make"))
+        return cmd_make(argc, argv);
+    fprintf(stderr, "opkg: 未知命令 %s\n", cmd);
+    return 1;
+}

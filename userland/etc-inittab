@@ -1,0 +1,29 @@
+# busybox-inittab - Parlz initramfs /sbin/init(busybox-init)行为定义
+#
+# 关键: busybox parse_inittab 用 delims "#:" + config_read(4 token) 解析。
+# 每行必须恰好 4 段(3 个冒号): tty:runlevel:action:command。
+# command 段是整段,不能含冒号(冒号是 token 分隔符),否则 busybox 把
+# ":xxx" 尾巴粘进命令名 → "can't run"。所以 cttyhack 不能写在
+# command 后 —— busybox-init 已把控制台 tty 交给子进程,isatty 正常。
+#
+# 关键: busybox parse_inittab 用 delims "#:" + config_read(4 token) 解析。
+# 每行必须恰好 4 段(3 个冒号): tty:runlevel:action:command。
+# command 段是整段,不能含冒号(冒号是 token 分隔符),否则 busybox 把
+# ":xxx" 尾巴粘进命令名 → "can't run"。所以 cttyhack 不能写在
+# command 后 —— busybox-init 已把控制台 tty 交给子进程,isatty 正常。
+#
+# ::sysinit: 内核起 init 后立即执行的串行钩子。只挂 proc/sys/tmp,
+# devtmpfs/devpts 内核 CONFIG_DEVTMPFS_MOUNT 已自动挂(EBUSY 无碍)。
+#
+# ::sysinit 跑启动主体(无需按键,开机自动):
+#   /usr/local/bin/parlz-boot.sh(shim) → /bin/bash 跑
+#   /usr/local/bin/parlz-boot-body.sh(root 探测/install.d/ifc/login/shell)。
+# 之前用 ::askfirst 需人工按键才触发 body —— 非交互自动化(boot-verify
+# 等)永远等不到, 且 body 的 login 钩子/shell 循环也进不去。改 sysinit
+# 后开机即自动进入 body, 自动化脚本按固定节奏注入即可。
+::sysinit:/bin/busybox mount -t proc proc /proc
+::sysinit:/bin/busybox mount -t sysfs sysfs /sys
+::sysinit:/bin/busybox mount -t tmpfs tmpfs /tmp
+::sysinit:/usr/local/bin/parlz-boot.sh
+::ctrlaltdel:/bin/busybox killall -HUP sh
+::shutdown:/bin/busybox mount -o remount,ro /

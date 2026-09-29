@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PWeb - it works</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+         max-width: 640px; margin: 4rem auto; line-height: 1.6; color: #222; }
+  h1 { color: #0a84ff; }
+  code { background: #f4f4f4; padding: 2px 6px; border-radius: 4px; }
+  .badge { display: inline-block; background: #0a84ff; color: #fff;
+           padding: 2px 10px; border-radius: 12px; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>PWeb <span class="badge">lightweight</span></h1>
+<p>PWeb is a tiny C web server - a single ~8k-loc codebase with a
+nginx-like config. It ships static files, 301 rewrites, reverse proxies,
+CGI, gzip, basic auth, and virtual hosts, while running comfortably on a
+0.5 core / 512 MB box.</p>
+<p><a href="about.html">About</a> -
+<a href="cgi-bin/hello.pl?who=web">CGI demo</a> -
+<a href="api/time">Proxy demo</a> -
+<a href="docs/">Autoindex demo</a></p>
+<p id="body">This is a long enough body so it crosses the gzip_min_length
+threshold and gets served with <code>Content-Encoding: gzip</code>.</p>
+<p>PWeb keeps its RSS flat: no full-file buffering, streaming proxies, and
+no per-connection memory growth. The event model is one worker thread per
+connection, so it scales by just adding threads instead of buffering.</p>
+</body>
+</html>

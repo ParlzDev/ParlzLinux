@@ -1,0 +1,841 @@
+/* w3m.c - w3m 风格文本浏览器(自研, 无外部终端库依赖, 中文输出)。
+ *
+ * 功能(对应 w3m 核心交互模型, 按 Parlz 终端简化):
+ *   - URL/本地 HTML 抓取: file:// 与相对路径直接读; http/https 复用
+ *     http_client(http_download, 同步拿全量), 失败给中文错误。
+ *   - HTML 解析: 提取正文文本(剥标签 + 保留段落/换行), 构建链接表。
+ *   - 简单 CSS 支持: 内联 style="" 属性 + <style> 块子集:
+ *       display:none      -> 元素(段落)从正文省略
+ *       color/background  -> ANSI 前景/背景色(按色名映射 8 色码)
+ *       font-weight:bold  -> 加粗
+ *       font-size:Npx     -> 字号放大(文本后加 "▮" 视觉提示, 终端无真缩放)
+ *     选择器支持: * / tag / .class / #id。
+ *   - 渲染: 按段输出, 底栏链接表; 非交互直接打印后退出。
+ */
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <strings.h>
+#include <unistd.h>
+#include <errno.h>
+#include <stdint.h>
+#include "http_client.h"
+
+#define PAGE_CAP  (1024 * 1024)
+#define LINK_CAP  1024
+#define LINE_MAX  4096
+
+struct link {
+    char text[128];
+    char target[512];
+};
+
+struct page {
+    char *text;
+    size_t len;
+    struct link links[LINK_CAP];
+    int nlinks;
+    char *title;
+};
+
+/* ---------- 取属性: 在标签串 <tag ...> 内找 name="value" ----------
+ * p 指向 '<', 函数内部用 memchr 找本标签的 '>' 作上界。
+ * 返回堆分配的字符串(调用方 free), 属性不存在返回 NULL。 */
+static char *attr_value(const char *p, const char *name)
+{
+    const char *limit = memchr(p, '>', 64);
+    if (!limit)
+        return NULL;
+    const char *scan = p;
+    size_t nl = strlen(name);
+    int dbg = getenv("W3M_DEBUG") ? 1 : 0;
+    while (scan < limit) {
+        const char *hit = strstr(scan, name);
+        if (!hit || hit + nl >= limit)
+            break;
+        /* 属性名边界: 前一个字符须是空白或 '<'(标签起始) */
+        if (hit > p && !isspace((unsigned char)hit[-1]) &&
+            hit[-1] != '<') {
+            scan = hit + 1;
+            continue;
+        }
+        const char *a = hit + nl;
+        while (*a == ' ' || *a == '\t')
+            a++;
+        if (dbg)
+            fprintf(stderr, "dbg attr %s: 边界OK, a->%c '%s'\n",
+                    name, *a, a);
+        if (*a != '=') {
+            scan = hit + 1;
+            continue;
+        }
+        a++;
+        while (*a == ' ' || *a == '\t')
+            a++;
+        const char *r;
+        size_t len;
+        if (*a == '"') {
+            a++;
+            r = a;
+            while (r < limit && *r != '"')
+                r++;
+            len = (size_t)(r - a);
+        } else if (*a == '\'') {
+            a++;
+            r = a;
+            while (r < limit && *r != '\'')
+                r++;
+            len = (size_t)(r - a);
+        } else {
+            r = a;
+            while (r < limit && !isspace((unsigned char)*r))
+                r++;
+            len = (size_t)(r - a);
+        }
+        char *buf = malloc(len + 1);
+        if (!buf)
+            return NULL;
+        memcpy(buf, a, len);
+        buf[len] = 0;
+        return buf;
+    }
+    return NULL;
+}
+
+/* ---------- CSS 规则(子集) ---------- */
+struct css_rule {
+    char selector[64];   /* tag / .class / #id / * */
+    int disp_none;
+    int bold;
+    char color[16];
+    char bg[16];
+    int fontsize;
+};
+static struct css_rule g_rules[64];
+static int g_nrules = 0;
+
+static int css_color_to_ansi(const char *name)
+{
+    if (!name || !*name)
+        return -1;
+    char lc[32];
+    size_t l = strnlen(name, sizeof lc - 1);
+    for (size_t i = 0; i < l; i++)
+        lc[i] = tolower((unsigned char)name[i]);
+    lc[l] = 0;
+    struct {
+        const char *n;
+        int code;
+    } map[] = {
+        {"black", 30}, {"red", 31}, {"green", 32}, {"yellow", 33},
+        {"blue", 34}, {"magenta", 35}, {"cyan", 36}, {"white", 37},
+        {"orange", 33}, {"purple", 35}, {"gray", 90}, {"grey", 90},
+        {"navy", 34}, {"teal", 36}, {"maroon", 31},
+    };
+    for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++)
+        if (strcmp(lc, map[i].n) == 0)
+            return map[i].code;
+    if (name[0] == '#') {
+        char hex[7];
+        size_t hl = strnlen(name + 1, 6);
+        if (hl >= 6) {
+            for (size_t i = 0; i < 6; i++)
+                hex[i] = tolower((unsigned char)name[1 + i]);
+            hex[6] = 0;
+            unsigned long v = strtoul(hex, NULL, 16);
+            int r = (int)(v >> 16) & 0xff;
+            int g = (int)(v >> 8) & 0xff;
+            int b = (int)v & 0xff;
+            if (r > 128 && g < 64 && b < 64)
+                return 31;
+            if (g > 128 && r < 64 && b < 64)
+                return 32;
+            if (b > 128 && r < 64 && g < 64)
+                return 34;
+            if (r > 128 && g > 128 && b < 64)
+                return 33;
+            if (r > 128 && b > 128 && g < 64)
+                return 35;
+            return (r + g + b > 384) ? 37 : 30;
+        }
+    }
+    return -1;
+}
+
+/* 从 "sel { prop: val; ... }" 解析一条规则, 成功 0 / 失败 -1 */
+static int parse_css_rule(const char *body, struct css_rule *r)
+{
+    memset(r, 0, sizeof *r);
+    const char *open = strchr(body, '{');
+    const char *close = open ? strchr(open + 1, '}') : NULL;
+    if (!open)
+        return -1;
+    size_t slen = (size_t)(open - body);
+    while (slen && isspace((unsigned char)body[slen - 1]))
+        slen--;
+    if (slen >= sizeof r->selector)
+        slen = sizeof r->selector - 1;
+    memcpy(r->selector, body, slen);
+    r->selector[slen] = 0;
+    /* 复合选择器简化: 若含逗号或"末段带空格", 取最后一段;
+       否则原样保留 tag.class / tag#id 复合形式 */
+    {
+        int has_sep = strpbrk(r->selector, " ,") != NULL;
+        if (has_sep) {
+            char *tok = r->selector + slen - 1;
+            while (tok > r->selector && !isspace((unsigned char)tok[-1]) &&
+                   tok[-1] != ',')
+                tok++;
+            size_t copy = (size_t)(r->selector + slen - tok);
+            if (copy >= sizeof r->selector)
+                copy = sizeof r->selector - 1;
+            memmove(r->selector, tok, copy);
+            r->selector[copy] = 0;
+        }
+    }
+    char decls[512];
+    size_t dlen = close ? (size_t)(close - open - 1) : 0;
+    if (dlen > sizeof decls - 1)
+        dlen = sizeof decls - 1;
+    memcpy(decls, open + 1, dlen);
+    decls[dlen] = 0;
+    char *save = decls;
+    int guard = 0;
+    while (*save && guard++ < 512) {
+        char *semi = strchr(save, ';');
+        char *chunk = save;
+        if (semi)
+            *semi = 0;
+        char *colon = strchr(chunk, ':');
+        if (!colon) {
+            if (!semi)
+                break;
+            save = semi + 1;
+            continue;
+        }
+        *colon = 0;
+        char *key = chunk, *val = colon + 1;
+        while (*key == ' ' || *key == '\t')
+            key++;
+        char *endk = key + strlen(key);
+        while (endk > key && (endk[-1] == ' ' || endk[-1] == '\t'))
+            *--endk = 0;
+        while (*val == ' ' || *val == '\t')
+            val++;
+        char *endv = val + strlen(val);
+        while (endv > val && (endv[-1] == ' ' || endv[-1] == '\t' ||
+                              endv[-1] == '\n'))
+            *--endv = 0;
+        char *unit = strstr(val, "px");
+        if (unit)
+            *unit = 0;
+        if (strcasecmp(key, "display") == 0 &&
+            strcasecmp(val, "none") == 0)
+            r->disp_none = 1;
+        else if (strcasecmp(key, "font-weight") == 0 &&
+                 (strcasecmp(val, "bold") == 0 ||
+                  strcasecmp(val, "700") == 0))
+            r->bold = 1;
+        else if (strcasecmp(key, "color") == 0)
+            strncpy(r->color, val, sizeof r->color - 1);
+        else if (strcasecmp(key, "background-color") == 0 ||
+                 strcasecmp(key, "background") == 0) {
+            char *ws = strpbrk(val, " (");
+            if (ws)
+                *ws = 0;
+            strncpy(r->bg, val, sizeof r->bg - 1);
+        } else if (strcasecmp(key, "font-size") == 0) {
+            r->fontsize = atoi(val);
+            if (r->fontsize <= 0)
+                r->fontsize = 16;
+        }
+        if (!semi)
+            break;
+        save = semi + 1;
+    }
+    return 0;
+}
+
+/* 元素样式(规则 + 内联合并) */
+struct elem_style {
+    int disp_none;
+    int bold;
+    int fg;
+    int bg;
+    int fontsize;
+};
+
+static struct elem_style default_elem_style(void)
+{
+    struct elem_style e;
+    memset(&e, 0, sizeof e);
+    e.fg = -1;
+    e.bg = -1;
+    return e;
+}
+
+/* 合并匹配规则(后写的属性覆盖前写的, 简化实现) */
+static void merge_rule(struct elem_style *e, const struct css_rule *r)
+{
+    if (r->disp_none)
+        e->disp_none = 1;
+    if (r->bold)
+        e->bold = 1;
+    int c = css_color_to_ansi(r->color);
+    if (c >= 0)
+        e->fg = c;
+    int b = css_color_to_ansi(r->bg);
+    if (b >= 0)
+        e->bg = b + 10;
+    if (r->fontsize > e->fontsize)
+        e->fontsize = r->fontsize;
+}
+
+static void apply_inline_css(struct elem_style *e, const char *css);
+
+static void apply_element_css(const char *line);
+
+/* 匹配元素自身: 依次试 tag.cls / tag#id / .cls / #id / tag, 命中即合并 */
+static void match_element(const char *tag, const char *cls, const char *id,
+                          struct elem_style *e)
+{
+    char key[96];
+    const char *cand[5];
+    size_t cand_len[5];
+    int ncand = 0;
+
+    /* 组合 1: tag.cls (仅当有 class) */
+    if (cls && *cls) {
+        size_t tl = strnlen(tag, sizeof key - 2 - 32);
+        memcpy(key, tag, tl);
+        key[tl] = '.';
+        size_t cl2 = strnlen(cls, 32);
+        memcpy(key + tl + 1, cls, cl2);
+        key[tl + 1 + cl2] = 0;
+        cand[ncand] = key;
+        cand_len[ncand] = tl + 1 + cl2;
+        ncand++;
+    }
+    /* 组合 2: tag#id (仅当有 id) */
+    if (id && *id) {
+        size_t tl = strnlen(tag, sizeof key - 2 - 32);
+        memcpy(key, tag, tl);
+        key[tl] = '#';
+        size_t il = strnlen(id, 32);
+        memcpy(key + tl + 1, id, il);
+        key[tl + 1 + il] = 0;
+        cand[ncand] = key;
+        cand_len[ncand] = tl + 1 + il;
+        ncand++;
+    }
+    /* 单独 .cls / #id / tag */
+    if (cls && *cls) {
+        size_t cl2 = strnlen(cls, 63);
+        key[0] = '.';
+        memcpy(key + 1, cls, cl2);
+        key[1 + cl2] = 0;
+        cand[ncand] = key;
+        cand_len[ncand] = 1 + cl2;
+        ncand++;
+    }
+    if (id && *id) {
+        size_t il = strnlen(id, 63);
+        key[0] = '#';
+        memcpy(key + 1, id, il);
+        key[1 + il] = 0;
+        cand[ncand] = key;
+        cand_len[ncand] = 1 + il;
+        ncand++;
+    }
+    {
+        size_t tl = strnlen(tag, 63);
+        memcpy(key, tag, tl);
+        key[tl] = 0;
+        cand[ncand] = key;
+        cand_len[ncand] = tl;
+        ncand++;
+    }
+    if (getenv("W3M_DEBUG"))
+        fprintf(stderr, "dbg match_element tag=%s cls=%s id=%s ncand=%d\n",
+                tag, cls ? cls : "", id ? id : "", ncand);
+
+    for (int c = 0; c < ncand; c++) {
+        for (int i = 0; i < g_nrules; i++) {
+            const struct css_rule *r = &g_rules[i];
+            size_t sl = strnlen(r->selector, sizeof r->selector - 1);
+            if (sl == cand_len[c] &&
+                strncasecmp(r->selector, cand[c], sl) == 0) {
+                if (getenv("W3M_DEBUG"))
+                    fprintf(stderr, "dbg   命中 [%s] 于 cand[%d]\n",
+                            r->selector, c);
+                merge_rule(e, r);
+            }
+        }
+    }
+}
+
+static void apply_inline_css(struct elem_style *e, const char *css)
+{
+    if (!css)
+        return;
+    char buf[256];
+    size_t l = strnlen(css, sizeof buf - 1);
+    memcpy(buf, css, l);
+    buf[l] = 0;
+    char *save = buf;
+    int guard = 0;
+    while (*save && guard++ < 256) {
+        char *semi = strchr(save, ';');
+        char *chunk = save;
+        if (semi)
+            *semi = 0;
+        char *kv = chunk;
+        while (*kv == ' ' || *kv == '\t' || *kv == '\n')
+            kv++;
+        char *colon = strchr(kv, ':');
+        if (!colon) {
+            if (!semi)
+                break;
+            save = semi + 1;
+            continue;
+        }
+        *colon = 0;
+        char *key = chunk, *val = colon + 1;
+        while (*key == ' ' || *key == '\t')
+            key++;
+        char *endk = key + strlen(key);
+        while (endk > key && (endk[-1] == ' ' || endk[-1] == '\t'))
+            *--endk = 0;
+        while (*val == ' ' || *val == '\t')
+            val++;
+        char *endv = val + strlen(val);
+        while (endv > val && (endv[-1] == ' ' || endv[-1] == '\t' ||
+                              endv[-1] == '\n'))
+            *--endv = 0;
+        char *unit = strstr(val, "px");
+        if (unit)
+            *unit = 0;
+        if (strcasecmp(key, "display") == 0 &&
+            strcasecmp(val, "none") == 0)
+            e->disp_none = 1;
+        else if (strcasecmp(key, "font-weight") == 0 &&
+                 (strcasecmp(val, "bold") == 0 ||
+                  strcasecmp(val, "700") == 0))
+            e->bold = 1;
+        else if (strcasecmp(key, "color") == 0)
+            e->fg = css_color_to_ansi(val);
+        else if (strcasecmp(key, "background-color") == 0 ||
+                 strcasecmp(key, "background") == 0) {
+            char *ws = strpbrk(val, " (");
+            if (ws)
+                *ws = 0;
+            int bgc = css_color_to_ansi(val);
+            e->bg = bgc >= 0 ? bgc + 10 : -1;
+        } else if (strcasecmp(key, "font-size") == 0) {
+            int fs = atoi(val);
+            if (fs > e->fontsize)
+                e->fontsize = fs;
+        }
+        if (!semi)
+            break;
+        save = semi + 1;
+    }
+}
+
+0
+}
+
+/* ---------- HTML 解析 ---------- */
+static void parse_html(const char *html, size_t hlen, struct page *pg)
+{
+    char buf[PAGE_CAP];
+    pg->text = buf;
+    pg->len = 0;
+    pg->nlinks = 0;
+    pg->title = NULL;
+    int in_title = 0;
+    char title[256] = {0};
+    const char *p = html;
+    const char *pend = html + hlen;
+    int cur_is_link = 0;
+    char link_text[128];
+    int link_text_l = 0;
+    char link_target[512] = {0};
+
+    long iters = 0, itcap = (long)hlen * 4 + 1024;
+    while (p < pend) {
+        if (++iters > itcap) {
+            fprintf(stderr, "w3m: parse 死循环保护触发\n");
+            break;
+        }
+        if (*p == '<') {
+            const char *tend = memchr(p, '>', pend - p);
+            if (!tend)
+                break;
+            size_t tlen = (size_t)(tend - p + 1);
+            char tag[64];
+            size_t tl = tlen < 63 ? tlen : 63;
+            memcpy(tag, p, tl);
+            tag[tl] = 0;
+            char *tname = tag + 1;
+            char tagname[32];
+            size_t tn = 0;
+            while (*tname && *tname != ' ' && *tname != '>' &&
+                   *tname != '(' && *tname != '\n' && *tname != '\t' &&
+                   tn < 31)
+                tagname[tn++] = tolower((unsigned char)*tname++);
+            tagname[tn] = 0;
+            int is_close = tagname[0] == '/';
+            const char *bt = tagname + (is_close ? 1 : 0);
+
+            if (strcasecmp(bt, "title") == 0 && !in_title && !is_close) {
+                in_title = 1;
+                p = tend + 1;
+                continue;
+            }
+            if (in_title && is_close && strcasecmp(bt, "title") == 0) {
+                in_title = 0;
+                pg->title = strdup(title);
+                p = tend + 1;
+                continue;
+            }
+            if (in_title) {
+                /* 标题内文本直接累积 */
+                if (!is_close) {
+                    size_t avail = sizeof title - strlen(title) - 1;
+                    size_t n = (size_t)(tend - p - 1) < avail
+                        ? (size_t)(tend - p - 1) : avail;
+                    if (n > 0) {
+                        memcpy(title + strlen(title), p + 1, n);
+                        title[strlen(title)] = 0;
+                    }
+                }
+                p = tend + 1;
+                continue;
+            }
+            /* style 块: 找配对 </style>, 逐条解析规则
+               (sstart = 开标签之后的内容起点, 到 </style> 为止) */
+            if (strcasecmp(bt, "style") == 0 && !is_close) {
+                const char *cand = strstr(tend + 1, "</style>");
+                if (!cand)
+                    cand = strstr(tend + 1, "</STYLE>");
+                const char *send = cand ? cand : pend;
+                if (getenv("W3M_DEBUG"))
+                    fprintf(stderr, "dbg style cand=%p len=%ld\n",
+                            (void *)cand, (long)(send - (tend + 1)));
+            const char *sstart = tend + 1;
+            const char *q = sstart;
+            int guard = 0;
+            while (q < send && guard++ < 512) {
+                if (getenv("W3M_DEBUG"))
+                    fprintf(stderr, "dbg css scan q-> %.40s\n", q);
+                    const char *brk = memchr(q, '{', (size_t)(send - q));
+                    if (!brk)
+                        break;
+                    const char *cl = memchr(brk + 1, '}',
+                                            (size_t)(send - brk - 1));
+                    if (!cl)
+                        break;
+            char rule[256];
+            size_t rl = (size_t)(cl - q + 1);
+            if (rl >= sizeof rule)
+                rl = sizeof rule - 1;
+            memcpy(rule, q, rl);
+            rule[rl] = 0;
+            if (getenv("W3M_DEBUG"))
+                fprintf(stderr, "dbg rule bytes: [%s] %zu\n",
+                        rule, rl);
+                    if (g_nrules < 64) {
+                        int rrc = parse_css_rule(rule, &g_rules[g_nrules]);
+                        if (getenv("W3M_DEBUG"))
+                            fprintf(stderr,
+                                    "dbg parse_rule %d -> sel=[%s]\n",
+                                    rrc, g_rules[g_nrules].selector);
+                        if (rrc == 0)
+                            g_nrules++;
+                    }
+                    q = cl + 1;
+                }
+                p = send;
+                continue;
+            }
+            if (strcasecmp(bt, "script") == 0 && !is_close) {
+                p = tend + 1;
+                continue;
+            }
+            /* 块级标签 -> 换行 + 注入 CSS 标记 §tag.class#id{style} */
+            int is_block = strcasecmp(bt, "p") == 0 ||
+                strcasecmp(bt, "div") == 0 || strcasecmp(bt, "li") == 0 ||
+                strcasecmp(bt, "h1") == 0 || strcasecmp(bt, "h2") == 0 ||
+                strcasecmp(bt, "h3") == 0 || strcasecmp(bt, "tr") == 0 ||
+                strcasecmp(bt, "pre") == 0 || strcasecmp(bt, "br") == 0 ||
+                strcasecmp(bt, "td") == 0 || strcasecmp(bt, "th") == 0;
+            if (is_block) {
+                buf[pg->len++] = '\n';
+                if (!is_close && strcasecmp(bt, "br") != 0) {
+                    char *cl = (char *)attr_value(p, "class");
+                    char *id = (char *)attr_value(p, "id");
+                    char *stl = (char *)attr_value(p, "style");
+                    char mk[256];
+                    size_t ml = snprintf(mk, sizeof mk,
+                        "\xc2\xa7%s%s%s%s{%s}",
+                        bt,
+                        cl ? "." : "", cl ? cl : "",
+                        id ? "#" : "", id ? id : "",
+                        stl ? stl : " ");
+                    if (ml < sizeof mk) {
+                        memcpy(buf + pg->len, mk, ml);
+                        pg->len += ml;
+                        if (getenv("W3M_DEBUG"))
+                            fprintf(stderr, "dbg inject: %.*s\n",
+                                    (int)ml, mk);
+                    }
+                    free(cl);
+                    free(id);
+                    free(stl);
+                }
+            }
+            if (strcasecmp(bt, "a") == 0 && !is_close) {
+                char *href = (char *)attr_value(p, "href");
+                if (href) {
+                    strncpy(link_target, href, sizeof link_target - 1);
+                    link_target[sizeof link_target - 1] = 0;
+                    cur_is_link = 1;
+                    link_text_l = 0;
+                    free(href);
+                }
+            } else if (is_close && strcasecmp(bt, "a") == 0) {
+                if (cur_is_link) {
+                    if (pg->nlinks < LINK_CAP) {
+                        struct link *L = &pg->links[pg->nlinks];
+                        strncpy(L->text, link_text, sizeof L->text - 1);
+                        L->text[sizeof L->text - 1] = 0;
+                        strncpy(L->target, link_target,
+                                sizeof L->target - 1);
+                        L->target[sizeof L->target - 1] = 0;
+                        pg->nlinks++;
+                    }
+                    cur_is_link = 0;
+                }
+            }
+            p = tend + 1;
+            continue;
+        }
+        /* 文本 */
+        if (in_title) {
+            size_t avail = sizeof title - strlen(title) - 1;
+            if (avail)
+                title[strlen(title)] = *p;
+            p++;
+            continue;
+        }
+        char c = *p++;
+        if (c == '\n' || c == '\r')
+            continue;
+        if (isspace((unsigned char)c) && !cur_is_link)
+            continue;
+        buf[pg->len++] = c;
+        if (cur_is_link) {
+            if (link_text_l < (int)sizeof link_text - 1)
+                link_text[link_text_l++] = c;
+            link_text[link_text_l] = 0;
+        }
+    }
+    buf[pg->len] = 0;
+}
+
+/* ---------- 取页 ---------- */
+static int fetch_page(const char *url, char *out, size_t cap)
+{
+    if (url[0] == 'f' && !strncasecmp(url, "file://", 7)) {
+        const char *path = url + 7;
+        FILE *f = fopen(path, "rb");
+        if (!f) {
+            fprintf(stderr, "打不开本地文件: %s\n", path);
+            return -1;
+        }
+        size_t n = fread(out, 1, cap - 1, f);
+        out[n] = 0;
+        fclose(f);
+        return (int)n;
+    }
+    if (!strncmp(url, "http://", 7) || !strncmp(url, "https://", 8)) {
+        char tmpf[64];
+        snprintf(tmpf, sizeof tmpf, "/tmp/w3m-%d.html", (int)getpid());
+        struct http_options opt;
+        memset(&opt, 0, sizeof opt);
+        opt.url = url;
+        opt.output = tmpf;
+        opt.timeout = 30;
+        struct http_result res;
+        int rc = http_download(&opt, &res, NULL);
+        if (rc) {
+            fprintf(stderr, "抓取失败(%s): %s\n", url, res.error);
+            return -1;
+        }
+        FILE *f = fopen(tmpf, "rb");
+        if (!f) {
+            fprintf(stderr, "读回抓取内容失败\n");
+            return -1;
+        }
+        size_t n = fread(out, 1, cap - 1, f);
+        out[n] = 0;
+        fclose(f);
+        unlink(tmpf);
+        return (int)n;
+    }
+    FILE *f = fopen(url, "rb");
+    if (!f) {
+        fprintf(stderr, "打不开 %s\n", url);
+        return -1;
+    }
+    size_t n = fread(out, 1, cap - 1, f);
+    out[n] = 0;
+    fclose(f);
+    return (int)n;
+}
+
+/* ---------- 渲染 ---------- */
+static void apply_element_css(const char *line)
+{
+    if ((unsigned char)line[0] != 0xC2)
+        return;
+    const char *p = line + 2;
+    char tag[32] = {0}, cls[64] = {0}, id[64] = {0}, style[128] = {0};
+    char *t = tag, *c = cls, *i = id, *s = style;
+    char mode = 0;
+    for (; *p; p++) {
+        char ch = *p;
+        if (mode == 0) {
+            if (ch == '.') { mode = 1; continue; }
+            if (ch == '#') { mode = 2; continue; }
+            if (ch == '{') { mode = 3; continue; }
+            if (ch == ' ' || ch == 0)
+                break;
+            if (t < tag + 31)
+                *t++ = tolower((unsigned char)ch);
+        } else if (mode == 1) {
+            if (ch == '#') { mode = 2; continue; }
+            if (ch == '{') { mode = 3; continue; }
+            if (ch == ' ' || ch == 0)
+                break;
+            if (c < cls + 63)
+                *c++ = ch;
+        } else if (mode == 2) {
+            if (ch == '{') { mode = 3; continue; }
+            if (ch == ' ' || ch == 0)
+                break;
+            if (i < id + 63)
+                *i++ = ch;
+        } else {
+            if (ch == '}' || ch == ' ')
+                break;
+            if (s < style + 127)
+                *s++ = ch;
+        }
+    }
+    const char *text = p;
+    while (*text == ' ' || *text == '}')
+        text++;
+
+    const struct css_rule *r = match_rule(tag, cls, id);
+    if (getenv("W3M_DEBUG"))
+        fprintf(stderr, "dbg match %s/%s/%s -> %s\n",
+                tag, cls, id,
+                r ? r->selector : "(无规则)");
+    struct elem_style e;
+    memset(&e, 0, sizeof e);
+    e.fg = -1;
+    e.bg = -1;
+    if (r) {
+        e.disp_none = r->disp_none;
+        e.bold = r->bold;
+        e.fg = css_color_to_ansi(r->color);
+        e.bg = e.fg >= 0 ? e.fg + 10 : -1;
+        e.fontsize = r->fontsize;
+    }
+    apply_inline_css(&e, style[0] ? style : NULL);
+
+    char esc[96] = {0};
+    size_t el = 0;
+    if (e.bold || e.fg >= 0) {
+        el += sprintf(esc + el, "\033[");
+        if (e.bold)
+            el += sprintf(esc + el, "1;");
+        if (e.fg >= 0)
+            el += sprintf(esc + el, "%d", e.fg);
+        if (e.bg >= 0)
+            el += sprintf(esc + el, ";%d", e.bg);
+        el += sprintf(esc + el, "m");
+    }
+    if (e.disp_none) {
+        printf("%s(隐藏: %s)%s\n",
+               esc[0] ? esc : "", tag, esc[0] ? "\033[0m" : "");
+        return;
+    }
+    if (esc[0])
+        printf("%s", esc);
+    printf("  %s", text);
+    if (e.fontsize > 16)
+        printf(" ▮%d", e.fontsize - 16);
+    if (esc[0])
+        printf("\033[0m");
+    printf("\n");
+}
+
+static void print_page(struct page *pg, const char *url)
+{
+    if (pg->title)
+        printf("标题: %s\n", pg->title);
+    printf("来源: %s\n\n", url);
+    const char *p = pg->text;
+    while (*p) {
+        const char *nl = memchr(p, '\n', pg->text + pg->len - p);
+        size_t ll = nl ? (size_t)(nl - p) : strnlen(p, 2048);
+        char linebuf[LINE_MAX];
+        memcpy(linebuf, p, ll);
+        linebuf[ll] = 0;
+    if (ll && (unsigned char)linebuf[0] == 0xC2)
+        apply_element_css(linebuf);
+    else if (ll)
+        printf("  %s\n", linebuf);
+    else
+        printf("\n");
+    if (getenv("W3M_DEBUG") && (unsigned char)p[0] == 0xC2)
+        fprintf(stderr, "dbg render C2: %.60s\n", p);
+        p = nl ? nl + 1 : p + ll;
+    }
+    printf("\n--- 链接表(%d 条) ---\n", pg->nlinks);
+    for (int i = 0; i < pg->nlinks; i++)
+        printf(" [%d] %s -> %s\n", i + 1, pg->links[i].text,
+               pg->links[i].target);
+}
+
+int main(int argc, char **argv)
+{
+    if (argc < 2) {
+        printf("w3m [URL|文件]\n");
+        printf("  支持 file:// / 相对路径 / http(s)://; 简单 CSS:\n");
+        printf("  display:none, color, background-color, font-weight:\n");
+        printf("  bold, font-size; 选择器 tag / .class / #id / *\n");
+        return 1;
+    }
+    const char *url = argv[1];
+    char *buf = malloc(PAGE_CAP);
+    if (!buf)
+        return 1;
+    int n = fetch_page(url, buf, PAGE_CAP);
+    if (n < 0) {
+        free(buf);
+        return 1;
+    }
+    struct page pg;
+    memset(&pg, 0, sizeof pg);
+    parse_html(buf, (size_t)n, &pg);
+    free(buf);
+    print_page(&pg, url);
+    free(pg.title);
+    return 0;
+}

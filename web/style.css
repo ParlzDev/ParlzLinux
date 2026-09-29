@@ -1,0 +1,466 @@
+/* parlz 官网 —— 默认纯黑，可切浅色。
+   所有动效统一用三阶贝塞尔 cubic-bezier(.16,1,.3,1)。 */
+
+/* 全站正文字体（zeoseven 的 JiangChengYueHuTi 400W）**不在这里 @import**：
+   那份 result.css 实测 140 KB（br 后 47.7 KB）、175 个 unicode-range 分片，而且
+   CDN 只给 `Cache-Control: max-age=600`（十分钟就过期）。@import 是"导入表必须先到位
+   才允许绘制"，手机上就是白屏几秒 —— 改成每个页面 head 里一条**非阻塞 link**
+   （media="print" + onload 切回 all），先用系统字体把内容画出来，字体到了再换。
+   代码框那个 LXGW 975 Yuan SC 400W 同理，只在 index.html 加载。 */
+
+:root {
+  --bg: #000;
+  --panel: #050505;
+  --panel-2: #030303;
+  --fg: #e9e9e9;
+  --dim: #7c7c7c;
+  --faint: #3a3a3a;
+  --line: #171717;
+  --line-hi: #232323;
+  --row: #0a0a0a;
+  --accent: #00e08a;
+  --accent-soft: rgba(0, 224, 138, .10);
+  --err: #ff6b6b;
+  /* 演示终端里 ls 的 ANSI 配色（目录/文件/链接） */
+  --ansi-dir: #5aa9ff;
+  --ansi-file: #00e08a;
+  --ansi-link: #22d3ee;
+  --ease: cubic-bezier(.16, 1, .3, 1);
+  --swap: .5s var(--ease);
+  /* 拉丁字符在最前面的等宽字体里就命中了，后面这串只在复杂文字（天城文/孟加拉文/
+     阿拉伯文/乌尔都文）出现时才用得上：Win10 走 Nirmala UI、Ubuntu 走 Noto/Lohit、
+     macOS 走系统自带的 Geeza Pro —— 不列的话这三种文字在部分机器上直接是豆腐块 */
+  --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", "Cascadia Mono",
+          Menlo, Consolas, "Liberation Mono",
+          "Nirmala UI", "Noto Sans Devanagari", "Lohit Devanagari",
+          "Noto Sans Bengali", "Lohit Bengali",
+          "Noto Sans Arabic", "Noto Naskh Arabic", "Geeza Pro", "Segoe UI", Tahoma,
+          "Noto Sans", "DejaVu Sans", monospace;
+  /* 正文/界面字体：webfont 打头（各平台一致），后面才是系统兜底 —— 中文、复杂文字都兜住 */
+  --ui: "JiangChengYueHuTi 400W", -apple-system, BlinkMacSystemFont, "Segoe UI",
+        "PingFang SC", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei",
+        "Nirmala UI", "Noto Sans Devanagari", "Lohit Devanagari",
+        "Noto Sans Bengali", "Lohit Bengali",
+        "Noto Sans Arabic", "Noto Naskh Arabic", "Geeza Pro", Tahoma, "Noto Sans", sans-serif;
+}
+html[data-theme="light"] {
+  --bg: #fbfbf9;
+  --panel: #ffffff;
+  --panel-2: #ffffff;
+  --fg: #101010;
+  --dim: #5f5f5f;
+  --faint: #9a9a9a;
+  --line: #e4e4e0;
+  --line-hi: #cfcfc9;
+  --row: #f3f3ef;
+  --accent: #00875a;
+  --accent-soft: rgba(0, 135, 90, .10);
+  --err: #c62828;
+  --ansi-dir: #0b63c5;
+  --ansi-file: #00875a;
+  --ansi-link: #0e7490;
+}
+/* 告诉浏览器当前是明还是暗：原生控件（语言下拉、滚动条）跟着走 */
+html[data-theme="dark"] { color-scheme: dark; }
+html[data-theme="light"] { color-scheme: light; }
+
+* { box-sizing: border-box; }
+/* 根字号定死 16px: 这个站的排版是按 px 设计的(正文 14px), 而容器宽度用 rem ——
+   若浏览器默认字号不是 16px, 46rem 会算成上千像素, 整页被撑得极宽。 */
+/* 整页全宽后不需要 vw 越界了 */
+html {
+  font-size: 16px; background: var(--bg); scroll-behavior: smooth;
+  /* 各页可用宽度一致：内容页有竖向滚动条、模拟机（整屏、overflow:hidden）没有，
+     差这 ~15px 就会让导航在一页换行、另一页不换行 —— 高度就不一样了。 */
+  scrollbar-gutter: stable;
+}
+::selection { background: var(--accent); color: var(--bg); }
+
+body {
+  margin: 0;
+  padding: 56px 20px 96px;   /* 左右留白 20px：与 sim.html 的终端一致（整页都按这个宽度走） */
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.75 var(--ui);
+  font-variant-ligatures: none;
+  -webkit-text-size-adjust: 100%;   /* 手机上别让系统放大字号 */
+  -webkit-font-smoothing: antialiased;
+  transition: background-color var(--swap), color var(--swap);
+}
+/* 全部页面铺满宽度（原来卡在 46rem 的正文栏太窄了）；只有长段落自己限一下行长 */
+main { max-width: none; margin: 0; position: relative; z-index: 1; }
+/* 正文烘的是中文，换语言在 body 末尾才做：先别显示，免得闪一下错语言。
+   兜底有两条，都保证"最坏情况也只是看见中文"，不会白屏：
+   ① 内联脚本 2.5s 后主动摘掉这个类  ② 下面这条动画到时自动显示
+   ②的时限从 1.6s 压到 0.6s：慢手机上 i18n.js（一百多 KB）可能几秒才到，
+   等它就是"点开来一片空白"——先让人读到内容（中文）比防那一下闪动重要。 */
+html.i18n-wait main { visibility: hidden; animation: i18n-show 0s linear .6s forwards; }
+@keyframes i18n-show { to { visibility: visible; } }
+
+/* ---- AJAX 翻页的过渡（router.js）----
+   只有一整块 <main> 参与动画：导航栏 .top 是常驻的，换掉的只有它下面那一段。
+   时长由 router 里的 LEAVE_MS / ENTER_MS 决定（那边是 await，不等 animationend），
+   改这里要同时改那里，否则过渡还没放完就换了内容。 */
+main.pg-out { animation: pgOut .22s var(--ease) forwards; pointer-events: none; }
+main.pg-in { animation: pgIn .36s var(--ease) both; }
+@keyframes pgOut {
+  to { opacity: 0; transform: translateY(-12px); filter: blur(1.5px); }
+}
+@keyframes pgIn {
+  from { opacity: 0; transform: translateY(14px); filter: blur(1.5px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+/* 取页/装脚本时顶上那条细线：慢一点也让人知道"在动"，不是点坏了 */
+#pgbar {
+  position: fixed; top: 0; left: 0; z-index: 60; height: 2px; width: 0; opacity: 0;
+  background: linear-gradient(90deg, transparent, var(--accent));
+  transition: opacity .3s linear, width .55s var(--ease);
+  pointer-events: none;
+}
+#pgbar.on { opacity: 1; width: 78%; }
+#pgbar.done { width: 100%; transition-duration: .4s, .18s; }
+
+/* 跟随指针的极弱光斑（纯装饰，禁动效时不显示） */
+#spot {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0;
+  background: radial-gradient(320px circle at var(--mx, 50%) var(--my, 0%),
+              var(--accent-soft), transparent 70%);
+  transition: opacity .9s var(--ease);
+}
+body.live #spot { opacity: 1; }
+html[data-theme="light"] #spot { opacity: .5; }
+
+a { color: var(--fg); text-decoration: none; position: relative;
+    transition: color var(--swap); }
+a:hover, a:focus-visible { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
+/* 下划线扫过（scaleX 0 -> 1） */
+a.u::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -3px; height: 1px;
+  background: var(--accent); transform: scaleX(0); transform-origin: left;
+  transition: transform .42s var(--ease);
+}
+a.u:hover::after, a.u:focus-visible::after { transform: scaleX(1); }
+
+/* 导航里的每一项都不许被压扁（放不下时宁可横向滑，也不换行/挤字） */
+.nav > * { flex: 0 0 auto; }
+/* 宽屏下导航**永不换行**：高度就和宽度、滚动条、语言都无关了，五个页面必然一致。
+   实在放不下时横向滑（滚动条藏起来，免得它自己又加高度）。 */
+@media (min-width: 641px) {
+  .nav { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .nav::-webkit-scrollbar { display: none; }
+}
+
+/* ---- 页头 ---- */
+.top {
+  display: flex; align-items: baseline; justify-content: space-between;
+  flex-wrap: wrap; gap: 12px 24px; padding-bottom: 14px; border-bottom: 1px solid var(--line);
+  /* 五个页面导航栏高度必须一致：
+     · flex: 0 0 auto —— 模拟机那页 main 是整屏 flex 列，默认会让它被压缩
+     · min-height —— 内容再怎么写也不会比这更矮（换行时照常变高） */
+  flex: 0 0 auto; min-height: 2.35rem;
+  animation: rise .8s var(--ease) both;
+  transition: border-color var(--swap);
+}
+.brand { font-size: 15px; }
+.nav { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px 20px; font-size: 13px; }
+.nav a { color: var(--dim); }
+.nav a:hover { color: var(--accent); }
+.nav a[aria-current="page"] { color: var(--fg); }
+.nav a[aria-current="page"]::before { content: "› "; color: var(--accent); }
+
+/* 主题开关 */
+button.theme {
+  background: none; border: none; padding: 0; font: inherit; font-size: 13px;
+  color: var(--dim); cursor: pointer;
+  transition: color var(--swap), letter-spacing .4s var(--ease);
+}
+button.theme:hover { color: var(--accent); letter-spacing: .05em; }
+button.theme::before { content: "◐ "; }
+
+/* 语言开关：原生 select 去掉外框，跟导航其它项同色同字号 */
+.langbox { display: inline-flex; align-items: baseline; white-space: nowrap; }
+.langbox::after { content: "⌄"; margin-inline-start: 4px; color: var(--faint); font-size: 12px; }
+select.lang {
+  background: none; border: none; padding: 0; font: inherit; font-size: 13px;
+  color: var(--dim); cursor: pointer;
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  transition: color var(--swap);
+}
+select.lang:hover, select.lang:focus-visible { color: var(--accent); }
+select.lang option { background: var(--panel); color: var(--fg); }
+
+/* ---- 标题区 ---- */
+.hero { padding: 52px 0 36px; }
+h1 {
+  margin: 0 0 20px; font-size: clamp(30px, 7vw, 46px); font-weight: 500;
+  letter-spacing: -.02em; line-height: 1.1; transition: color var(--swap);
+}
+html.js h1 span.ch {
+  display: inline-block; opacity: 0; transform: translateY(.28em) scale(.96);
+  transition: opacity .7s var(--ease), transform .7s var(--ease);
+}
+h1.on span.ch { opacity: 1; transform: none; }
+.cursor {
+  display: inline-block; width: .5em; height: .9em; margin-left: .14em;
+  background: var(--accent); vertical-align: -.05em;
+  animation: blink 1.05s steps(1, end) infinite;
+}
+/* 整页拉宽后，纯文字块限一下行长（表格/代码/pre 仍然铺满） */
+.lede { margin: 0; color: var(--dim); max-width: 52rem; transition: color var(--swap); }
+.hint, .state, dd { max-width: 80rem; }
+.lede b { color: var(--fg); font-weight: 500; }
+
+/* ---- 首页的代码展示（Hello World 四种写法，慢慢敲；不是模拟机） ----
+   整页已经是全宽了，这里跟着铺满就行（和 sim.html 的终端同宽） */
+.codebox {
+  margin-top: 30px;
+  border: 1px solid var(--line); background: var(--panel);
+  overflow: hidden;
+  transition: border-color .45s var(--ease), background-color var(--swap), box-shadow .6s var(--ease);
+}
+.codebox:hover { border-color: var(--line-hi); }
+/* 正在敲字时整块透出一点辉光（特效由 codeshow.js 切 .typing/.erasing） */
+.codebox.typing { border-color: var(--line-hi); box-shadow: 0 0 38px -16px var(--accent); }
+.codebox.erasing { box-shadow: 0 0 26px -20px var(--err); }
+.cb-head {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border-bottom: 1px solid var(--line); color: var(--faint); font-size: 12px;
+}
+.cb-dot { width: 7px; height: 7px; background: var(--accent); border-radius: 50%; flex: 0 0 auto; }
+.codebox.typing .cb-dot { animation: dotpulse 1.1s ease-in-out infinite; }
+@keyframes dotpulse { 50% { box-shadow: 0 0 0 4px var(--accent-soft); } }
+.codebox .code {
+  margin: 0; padding: 14px 16px; height: 14.4rem; overflow: auto;
+  background: var(--panel-2); border: none; white-space: pre; font-size: 13.5px; line-height: 1.6;
+  /* 扫描线：一行淡一点的底纹，终端质感 */
+  background-image: repeating-linear-gradient(0deg, rgba(255, 255, 255, .022) 0 1px, transparent 1px 3px);
+}
+html[data-theme="light"] .codebox .code {
+  background-image: repeating-linear-gradient(0deg, rgba(0, 0, 0, .03) 0 1px, transparent 1px 3px);
+}
+/* 刚落下的那个字闪一下（每次重绘都重建这个 span，所以每敲一个字都会亮一次） */
+.cb-hot { color: var(--accent); animation: hotspark .5s var(--ease) both; }
+@keyframes hotspark {
+  from { text-shadow: 0 0 14px var(--accent), 0 0 3px var(--accent); }
+  to { text-shadow: none; }
+}
+/* 只有代码用 zeoseven 的英文等宽字体（@import 在 index.html 里） */
+.codebox .code .c { color: var(--faint); }
+.codebox .code .s { color: var(--accent); }
+.codebox .code .k { color: var(--fg); font-weight: 500; }
+.cb-cur {
+  display: inline-block; width: .58em; height: 1.05em; margin-left: 1px;
+  background: var(--accent); vertical-align: -.16em;
+  box-shadow: 0 0 10px var(--accent);
+  animation: blink 1.05s steps(1, end) infinite;
+}
+/* 模拟机（sim.html）用不到 .term 了；终端样式见下面 .screen 那一节 */
+
+/* ---- 区块 ---- */
+section { padding: 30px 0; border-top: 1px solid var(--line);
+          transition: border-color var(--swap); }
+html.js [data-reveal] { opacity: 0; transform: translateY(10px);
+  transition: opacity .8s var(--ease), transform .8s var(--ease);
+  transition-delay: var(--d, 0s); }
+[data-reveal].on { opacity: 1; transform: none; }
+h2 { margin: 0 0 16px; font-size: 12px; font-weight: 500; color: var(--dim);
+     letter-spacing: .08em; transition: color var(--swap); }
+h2::before { content: "# "; color: var(--accent); }
+
+dl { display: grid; grid-template-columns: 8.5rem 1fr; gap: 6px 20px; margin: 0; }
+dt { color: var(--dim); transition: color var(--swap); }
+dd { margin: 0; overflow-wrap: anywhere; }
+
+pre {
+  margin: 0; padding: 16px 18px; background: var(--panel-2);
+  border: 1px solid var(--line); overflow-x: auto; font: inherit; color: var(--fg);
+  transition: border-color .45s var(--ease), background-color var(--swap), color var(--swap);
+}
+/* 代码（pre / 行内 code / 终端屏幕）仍走等宽栈：正文换了通用字体，但这些地方要字符对齐 */
+pre, code, .screen { font-family: var(--mono); }
+pre:hover { border-color: var(--line-hi); }
+pre .p { color: var(--accent); }
+pre .c { color: var(--faint); }
+.hint { margin: 10px 0 0; color: var(--faint); font-size: 13px; }
+
+/* ---- 下载 ---- */
+.dl { display: grid; gap: 10px; margin-top: 4px; }
+.dl a {
+  display: grid; grid-template-columns: 5.5rem 1fr auto; align-items: center;
+  gap: 14px; padding: 14px 16px; border: 1px solid var(--line);
+  background: var(--panel-2); overflow: hidden; isolation: isolate;
+  transition: border-color .45s var(--ease), background-color var(--swap);
+}
+.dl a:hover { border-color: var(--line-hi); }
+.dl a::before {          /* 扫光 */
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  background: linear-gradient(100deg, transparent 20%, var(--accent-soft) 50%, transparent 80%);
+  transform: translateX(-101%); transition: transform .8s var(--ease);
+}
+.dl a:hover::before, .dl a:focus-visible::before { transform: translateX(0); }
+.dl .kind { color: var(--fg); letter-spacing: .06em; }
+.dl .meta { color: var(--faint); font-size: 13px; overflow-wrap: anywhere;
+            transition: color .45s var(--ease); }
+.dl a:hover .meta { color: var(--dim); }
+.dl .size { color: var(--dim); white-space: nowrap; }
+.dl .go { color: var(--faint); transition: transform .45s var(--ease), color .45s var(--ease); }
+.dl a:hover .go { color: var(--accent); transform: translateX(3px); }
+
+/* ---- 包表格 ---- */
+.feedline { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--dim); }
+.feedline code { color: var(--fg); overflow-wrap: anywhere; }
+table { width: 100%; border-collapse: collapse; margin-top: 18px; font: inherit; }
+/* 逻辑属性：从右往左（ar/ur）时 start/end 自动翻边，不用再写一套 RTL 规则 */
+th, td { text-align: start; padding-block: 11px; padding-inline: 0 12px;
+         border-bottom: 1px solid var(--line); transition: border-color var(--swap); }
+th { color: var(--dim); font-weight: 400; font-size: 12px; letter-spacing: .06em; }
+/* 逐行浮现**只给 JS 填出来的那张表**（packages 页 #pkgs，app.js 会给每行加 .on）。
+   以前写的是 `html.js tbody tr`，把许可证页/仓库页那种**烘在 HTML 里的静态表**也一起
+   设成 opacity:0 又没人给 .on —— 没开"减弱动态效果"的浏览器上那 12 行是一整块空白。 */
+html.js #pkgs tbody tr { opacity: 0; transform: translateY(6px);
+  transition: opacity .6s var(--ease), transform .6s var(--ease),
+              background-color .45s var(--ease); }
+#pkgs tbody tr.on { opacity: 1; transform: none; }
+tbody tr:hover { background: var(--row); }
+td.name { color: var(--fg); }
+td.ver, td.size { color: var(--dim); white-space: nowrap; }
+td.cmd { text-align: end; white-space: nowrap; }
+.num { color: var(--faint); }
+.state { margin-top: 18px; color: var(--dim); }
+.state.bad { color: var(--err); }
+
+button.copy {
+  background: none; border: none; padding: 0; color: var(--dim); font: inherit;
+  cursor: pointer; transition: color .4s var(--ease), letter-spacing .4s var(--ease);
+}
+button.copy:hover { color: var(--accent); letter-spacing: .04em; }
+button.copy.copied { color: var(--accent); }
+
+/* ---- 跑马灯 ---- */
+.ticker { margin-top: 34px; border-top: 1px solid var(--line);
+          border-bottom: 1px solid var(--line); overflow: hidden;
+          transition: border-color var(--swap); }
+/* 跑马灯锁 ltr：内容是拉丁词，RTL 下按 rtl 排会与 translateX(-50%) 打架 */
+.ticker div { display: flex; direction: ltr; width: max-content; animation: slide 34s linear infinite; }
+.ticker:hover div { animation-play-state: paused; }
+.ticker span { padding: 9px 18px; color: var(--faint); font-size: 12px; white-space: nowrap; }
+.ticker span b { color: var(--dim); font-weight: 400; }
+
+footer { padding-top: 22px; border-top: 1px solid var(--line); color: var(--faint);
+         font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px 18px;
+         transition: border-color var(--swap), color var(--swap); }
+
+/* ---- 复杂文字 / 从右往左（ar、ur、hi、bn）----
+   两条都是渲染兼容性，不是审美，别删：
+   ① 阿拉伯文与乌尔都文是连着写的、天城文与孟加拉文有合字 —— 任何 letter-spacing
+      都会把字拆开（也顺手把 ligature 关掉）。这四种语言一律按默认字距渲染。
+   ② 阿拉伯/乌尔都整页从右往左，但**终端与代码块锁 ltr**：内核日志、命令行、
+      sha256 这些左起读才不别扭（译文注释留在 ltr 块里也能正常按 bidi 显示）。 */
+html[data-lang="ar"] :where(*), html[data-lang="ur"] :where(*),
+html[data-lang="hi"] :where(*), html[data-lang="bn"] :where(*) {
+  letter-spacing: normal !important;
+  font-variant-ligatures: normal !important;
+}
+html[dir="rtl"] .term, html[dir="rtl"] pre { direction: ltr; text-align: left; }
+html[dir="rtl"] a.u::after { transform-origin: right; }
+html[dir="rtl"] .nav a[aria-current="page"]::before { content: "‹ "; }
+
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes blink { 50% { opacity: 0; } }
+@keyframes pgFadeOut { to { opacity: 0; } }
+@keyframes pgFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slide { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+/* ---- 整页模拟机（sim.html）：终端就是屏幕 ---- */
+/* 100vh 在手机上 = **大视口**（含被地址栏挡住的那一条），而这边是 overflow:hidden：
+   提示符和最后几行正好落在看不见也滚不到的那一段，看着就是"手机端加载不出来"。
+   所以按 dvh（跟着地址栏/软键盘变）走，不支持 dvh 的浏览器退回上一条 100vh。
+   视口高度变化会发 resize，term.js 的 fit() 已经防抖重排行列。 */
+.simpage { padding: 0; height: 100vh; height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
+/* 头部与其它页**逐像素对齐**：同样的上边距（body 是 56px）、同样的左右留白 20px。
+   （之前这里是 margin-top:14px，头部顶在最上面 —— 和别的页一比就"不一样"。） */
+.simpage main { display: flex; flex-direction: column; flex: 1; min-height: 0; max-width: none;
+                margin: 0; padding: 56px 20px 12px; }
+.simpage .top { margin-top: 0; }
+.screen {
+  flex: 1; min-height: 0; margin-top: 12px; padding: 8px 10px; overflow: hidden;
+  border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+  font: 13px/1.35 var(--mono); white-space: pre; outline: none; cursor: text;
+  position: relative;                       /* 手机键盘的隐藏输入框挂在里面 */
+  transition: border-color .45s var(--ease), background-color var(--swap);
+}
+/* 手机上点一下就聚焦这个框，系统键盘才会弹出来（term.js 把输入转成按键） */
+.screen .term-in {
+  position: absolute; left: 0; top: 0; width: 1px; height: 1px;
+  opacity: 0; border: none; background: none; padding: 0; outline: none;
+}
+.screen:focus { border-color: var(--line-hi); }
+.simpage .simfoot { margin-top: 8px; flex: 0 0 auto; }
+
+/* ANSI 颜色（term.js 渲染出的 class） */
+.screen .t-inv { background: var(--fg); color: var(--bg); }
+.screen .t-bold { font-weight: 700; }
+.screen .t-dim { opacity: .6; }
+.screen .t-cur { background: var(--accent); color: var(--bg); }
+.screen .t-fg0 { color: #6b7280; } .screen .t-fg1 { color: #ef4444; }
+.screen .t-fg2 { color: #22c55e; } .screen .t-fg3 { color: #eab308; }
+.screen .t-fg4 { color: #3b82f6; } .screen .t-fg5 { color: #d946ef; }
+.screen .t-fg6 { color: #06b6d4; } .screen .t-fg7 { color: #d4d4d8; }
+.screen .t-fg8 { color: #9ca3af; } .screen .t-fg9 { color: #f87171; }
+.screen .t-fg10 { color: #4ade80; } .screen .t-fg11 { color: #facc15; }
+.screen .t-fg12 { color: #60a5fa; } .screen .t-fg13 { color: #e879f9; }
+.screen .t-fg14 { color: #22d3ee; } .screen .t-fg15 { color: #ffffff; }
+.screen .t-bg0 { background: #111827; } .screen .t-bg1 { background: #7f1d1d; }
+.screen .t-bg2 { background: #14532d; } .screen .t-bg4 { background: #1e3a8a; }
+html[data-theme="light"] .screen .t-fg0 { color: #4b5563; }
+html[data-theme="light"] .screen .t-fg7 { color: #1f2937; }
+html[data-theme="light"] .screen .t-fg15 { color: #000; }
+html[data-theme="light"] .screen .t-cur { background: var(--accent); color: #fff; }
+
+/* ---- 手机版 ---- */
+@media (max-width: 640px) {
+  body { padding: 26px 16px 56px; font-size: 13.5px; }
+  .hero { padding: 30px 0 22px; }
+  .lede { max-width: none; }
+  dl { grid-template-columns: 1fr; gap: 0; }
+  dt { margin-top: 8px; }
+  dd { margin-bottom: 10px; }
+  /* 导航：字小一点、间距紧一点，尽量少换行 */
+  .top { gap: 8px 16px; }
+  .nav { gap: 8px 13px; font-size: 12.5px; }
+  .nav a { padding: 3px 0; }
+  select.lang, button.theme { font-size: 12.5px; }
+  th.ver, td.ver { display: none; }
+  table { font-size: 12.5px; }
+  th, td { padding-block: 9px; padding-inline: 0 10px; }
+  pre { padding: 12px 13px; font-size: 12px; }
+  .dl a { grid-template-columns: 1fr auto; }
+  .dl .kind { grid-column: 1 / -1; }
+  .codebox .code { height: 12rem; font-size: 12px; }
+  /* 模拟机：头部同样与其它页对齐（上边距 26px、左右 16px），只是终端自己小一号 */
+  .simpage main { padding: 26px 16px 8px; }
+  .simpage .top { margin-top: 0; }
+  .screen { font-size: 11.5px; margin-top: 8px; padding: 6px 8px; }
+  .simpage .simfoot { font-size: 11.5px; }
+  footer { font-size: 12.5px; }
+}
+
+/* 手指点的设备：行距放松一点 */
+@media (hover: none) and (pointer: coarse) {
+  body { line-height: 1.8; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  html.js [data-reveal], html.js h1 span.ch, html.js .term div.line, html.js #pkgs tbody tr {
+    opacity: 1 !important; transform: none !important; }
+  #spot { display: none; }
+  .ticker div { animation: none; }
+  /* 上面那条 * 会把 i18n 的"超时自动显示"也一起禁掉，这里单独放行（内容永远能看见） */
+  html.i18n-wait main { animation: i18n-show 0s linear .6s forwards !important; }
+  /* 翻页过渡同理：位移和模糊是"动"，被禁掉了，但**只淡入淡出要留着** ——
+     全禁的话 AJAX 翻页就又变成生硬的一跳，正是要修的那个毛病 */
+  main.pg-out { animation: pgFadeOut .16s linear forwards !important; }
+  main.pg-in { animation: pgFadeIn .2s linear both !important; }
+}

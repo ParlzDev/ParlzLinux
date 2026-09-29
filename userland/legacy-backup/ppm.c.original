@@ -1,0 +1,469 @@
+/* ppm.c - PPM (Parlz Package Manager):.ppm 包的命令行管理。
+ *
+ * .ppm 包格式:newc cpio(ASCII hex 头,magic "070701"),内含:
+ *   PPMHEAD          元数据条目(普通文件项,内容 = "name:\nversion:\ndesc:\n")
+ *   <相对路径>       各负载文件/目录(保持包内路径)
+ * 用明文 newc cpio(非二进制、非 cpio.gz):静态用户空间无 zlib;
+ * 结构与 cpio newc 等价(host 侧可参考,只是数值字段用 ASCII hex)。
+ *
+ * 子命令:
+ *   ppm install <pkg.ppm> [pkg2 ...]   解包安装到 /(保留路径与可执行位),
+ *                                     并登记 /var/lib/ppm/<name>.ppm.meta
+ *   ppm list [pkg.ppm]                无参列出已安装包;带参列出包内文件
+ *   ppm make <dir> <name> <version> <pkg.ppm>   把 dir 打成一个 .ppm
+ *
+ * 设计约束(与仓库现状对齐):静态 -fno-pie 自包含;安装以 root 运行;
+ * 路径穿越(.. / 绝对路径)一律拒绝。
+ */
+#define _XOPEN_SOURCE 700
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+
+/* ---- newc cpio(ASCII hex 头)----
+ * 条目头(逐字段,字段间单空格):
+ *   "070701" ino(8) mode(8) uid(8) gid(8) nlink(8) mtime(8)
+ *   filesize(10) devmajor(8) devminor(8) rlink(8) name\0
+ *   4 字节对齐 pad,随后 filesize 字节负载,再 4 字节对齐 pad。
+ * 归档末尾:ino=0,name="TRAILER///" 的空条目。
+ *
+ * 头固定前缀长度(name 起始偏移):
+ *   magic(6) + [空格(1)+字段]×10 = 6 + (1+8)*6 + (1+10) + (1+8)*3
+ *   = 6 + 54 + 11 + 27 = 98,加 rlink 后的末尾空格 = 99。
+ * 各字段 offset: ino=7, mode=16, filesize=61, name=99。 */
+#define CPION_MAGIC "070701"
+#define CPION_HDR_FIXED 99
+#define CPION_OFF_INO 7
+#define CPION_OFF_MODE 16
+#define CPION_OFF_UID 25
+#define CPION_OFF_GID 34
+#define CPION_OFF_NLINK 43
+#define CPION_OFF_MTIME 52
+#define CPION_OFF_SIZE 62      /* 10 hex */
+#define CPION_OFF_DEVMAJ 73
+#define CPION_OFF_DEVMIN 82
+#define CPION_OFF_RLINK 91
+
+/* 递归建父目录(mkdir -p 语义) */
+static void mkdirs_parent(const char *path)
+{
+    char tmp[1024];
+    snprintf(tmp, sizeof tmp, "%s", path);
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = 0;
+            if (access(tmp, F_OK) != 0)
+                mkdir(tmp, 0755);
+            *p = '/';
+        }
+    }
+}
+
+/* 把包内相对路径拼成安装目标(根 /),拒绝 .. 与绝对路径。成功 0,拒绝 -1 */
+static int resolve_dest(const char *rel, char *out, size_t outsz)
+{
+    const char *p = rel;
+    while (*p == '/')
+        p++;
+    if (!*p)
+        return -1;
+    if (strstr(p, "..")) {
+        fprintf(stderr, "ppm: 拒绝越界路径 %s\n", p);
+        return -1;
+    }
+    snprintf(out, outsz, "/%s", p);
+    return 0;
+}
+
+/* 读整文件到堆(返回长度;<0 失败) */
+static long read_file(const char *path, char **out)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return -1;
+    size_t cap = 1 << 20, total = 0;
+    char *buf = malloc(cap);
+    size_t n;
+    while ((n = fread(buf + total, 1, cap - total, f)) > 0) {
+        total += n;
+        if (total == cap) {
+            cap <<= 1;
+            buf = realloc(buf, cap);
+        }
+    }
+    fclose(f);
+    *out = buf;
+    return (long)total;
+}
+
+/* 写一个 cpio 条目头(到 name 前的固定 99 字节 + name + NUL,4 对齐),
+ * 返回 name 后(负载起点)前的 pad 数(调用方无需管,emit 已写 pad)。 */
+static void emit_hdr(FILE *f, unsigned ino, unsigned mode, long sz,
+                     const char *name)
+{
+    char hdr[CPION_HDR_FIXED + 256];
+    int n = snprintf(hdr, sizeof hdr,
+                     "%s %08x %08x 00000000 00000000 00000001 00000000 "
+                     "%010lx 00000000 00000000 00000000%s",
+                     CPION_MAGIC, ino, mode, (unsigned long)sz, name);
+    /* snprintf 结果:98 固定前缀(到 rlink 后含末尾空格) + name */
+    int total = 98 + (int)strlen(name);
+    int pad = (4 - (total % 4)) % 4;
+    fwrite(hdr, 1, (size_t)n, f);
+    for (int i = 0; i < pad; i++)
+        fputc(' ', f);
+}
+
+/* 写条目负载 + 负载后 4 字节对齐 */
+static void emit_data(FILE *f, const char *data, long sz)
+{
+    if (sz <= 0)
+        return;
+    fwrite(data, 1, (size_t)sz, f);
+    int pad = (4 - ((int)sz % 4)) % 4;
+    for (int i = 0; i < pad; i++)
+        fputc(' ', f);
+}
+
+/* 解析 cpio 条目头(从缓冲 h 起),返回负载长度(<0 非条目/失败),
+ * isdir 输出是否目录,name 拷入 namesz。 */
+static long parse_entry(const char *h, int *isdir, char *name, size_t namesz)
+{
+    if (strncmp(h, CPION_MAGIC, 6) != 0)
+        return -1;
+    char mv[9], fv[11];
+    memcpy(mv, h + CPION_OFF_MODE, 8); mv[8] = 0;
+    unsigned mode_v = (unsigned)strtoul(mv, NULL, 16);
+    *isdir = ((mode_v & 0170000) == 0040000);
+    memcpy(fv, h + CPION_OFF_SIZE, 10); fv[10] = 0;
+    long sz = strtol(fv, NULL, 16);
+    size_t i = 0;
+    const char *np = h + CPION_HDR_FIXED;
+    while (*np && i < namesz - 1)
+        name[i++] = *np++;
+    name[i] = 0;
+    return sz;
+}
+
+/* 遍历 cpio 流,对每个条目回调 cb。返回处理条目数(<0 失败)。
+ * 读法:每次读入 头+name(到 NUL),算出 pad 跳过,读负载,读负载 pad。 */
+typedef int (*cb_fn)(const char *name, const char *data, long len,
+                     int isdir, void *ctx);
+
+static int for_each_entry(const char *cpio_path, cb_fn cb, void *ctx)
+{
+    FILE *f = fopen(cpio_path, "rb");
+    if (!f) {
+        perror(cpio_path);
+        return -1;
+    }
+    int count = 0;
+    char hdr[1024];
+    for (;;) {
+        size_t rd = fread(hdr, 1, sizeof hdr - 1, f);
+        if (rd < 10)
+            break;
+        hdr[rd] = 0;
+        int isdir = 0;
+        char name[512];
+        long sz = parse_entry(hdr, &isdir, name, sizeof name);
+        if (sz < 0)
+            break;
+        if (strcmp(name, "TRAILER///") == 0)
+            break;
+        /* emit 时 name 以 %s 写入(不含 NUL),整个头已 4 对齐,
+         * 负载紧接其后 */
+        char *data = NULL;
+        if (sz > 0) {
+            data = malloc((size_t)sz + 1);
+            if (!data)
+                break;
+            size_t got = 0;
+            while (got < (size_t)sz) {
+                size_t c = fread(data + got, 1, (size_t)sz - got, f);
+                if (c == 0)
+                    break;
+                got += c;
+            }
+            data[got] = 0;
+            int pad = (4 - ((int)sz % 4)) % 4;
+            for (int i = 0; i < pad; i++)
+                fgetc(f);
+        }
+        if (cb(name, data ? data : "", sz, isdir, ctx) < 0) {
+            free(data);
+            fclose(f);
+            return -1;
+        }
+        free(data);
+        count++;
+    }
+    fclose(f);
+    return count;
+}
+
+/* ---- 安装 ---- */
+struct inst_ctx {
+    const char *pkg;
+    long files, dirs;
+    char name[128];
+    char version[32];
+};
+
+static int inst_cb(const char *name, const char *data, long len,
+                   int isdir, void *ctx)
+{
+    struct inst_ctx *c = ctx;
+    char dest[1024];
+    if (resolve_dest(name, dest, sizeof dest) < 0)
+        return 0;
+    if (isdir) {
+        mkdirs_parent(dest);
+        c->dirs++;
+        return 0;
+    }
+    if (!strcmp(name, "PPMHEAD")) {
+        /* 元数据条目:内容 "name: X\nversion: Y\ndesc: Z\n" */
+        char meta[512];
+        snprintf(meta, sizeof meta, "%s", data);
+        for (char *lp = meta; *lp; ) {
+            char *nl = strchr(lp, '\n');
+            if (nl)
+                *nl = 0;
+            char *colon = strchr(lp, ':');
+            if (colon) {
+                char *k = lp, *v = colon + 1;
+                while (*k == ' ')
+                    k++;
+                while (*v == ' ')
+                    v++;
+                if (!strncmp(k, "name", 4))
+                    snprintf(c->name, sizeof c->name, "%s", v);
+                else if (!strncmp(k, "version", 7))
+                    snprintf(c->version, sizeof c->version, "%s", v);
+            }
+            if (!nl)
+                break;
+            lp = nl + 1;
+        }
+        return 0;
+    }
+    /* 普通文件:建父目录 + 写 */
+    char parent[1024];
+    snprintf(parent, sizeof parent, "%s", dest);
+    char *slash = strrchr(parent, '/');
+    if (slash && slash != parent) {
+        *slash = 0;
+        mkdirs_parent(parent);
+        *slash = '/';
+    }
+    int fd = open(dest, O_WRONLY | O_CREAT | O_TRUNC, 0755);
+    if (fd < 0) {
+        fprintf(stderr, "ppm: 写 %s 失败: %s\n", dest, strerror(errno));
+        return 0;
+    }
+    size_t done = 0;
+    while (done < (size_t)len) {
+        ssize_t w = write(fd, data + done, (size_t)len - done);
+        if (w <= 0)
+            break;
+        done += (size_t)w;
+    }
+    close(fd);
+    c->files++;
+    return 0;
+}
+
+static int cmd_install(int argc, char **argv)
+{
+    if (argc < 3) {
+        fprintf(stderr, "用法: ppm install <pkg.ppm> [...]\n");
+        return 1;
+    }
+    int rc = 0;
+    for (int i = 2; i < argc; i++) {
+        struct inst_ctx c = { .pkg = argv[i], .name = "?", .version = "?" };
+        int n = for_each_entry(argv[i], inst_cb, &c);
+        if (n < 0) {
+            fprintf(stderr, "ppm: 解包 %s 失败\n", argv[i]);
+            rc = 1;
+            continue;
+        }
+        mkdirs_parent("/var/lib/ppm/x");
+        char meta[256];
+        snprintf(meta, sizeof meta, "/var/lib/ppm/%s.ppm.meta", c.name);
+        FILE *mf = fopen(meta, "wb");
+        if (mf) {
+            fprintf(mf, "name: %s\nversion: %s\nsrc: %s\nfiles: %ld\n",
+                    c.name, c.version, argv[i], c.files);
+            fclose(mf);
+        }
+        printf("PPM: 已安装 %s %s(%ld 文件,%ld 目录,源自 %s)\n",
+               c.name, c.version, c.files, c.dirs, argv[i]);
+    }
+    return rc;
+}
+
+/* ---- list ---- */
+static int list_cb(const char *name, const char *data, long len,
+                   int isdir, void *ctx)
+{
+    (void)data; (void)len; (void)ctx;
+    printf("  %c %s\n", isdir ? 'd' : 'f', name);
+    return 0;
+}
+
+static int cmd_list(int argc, char **argv)
+{
+    if (argc < 3) {
+        printf("PPM: 已安装包:\n");
+        DIR *d = opendir("/var/lib/ppm");
+        if (d) {
+            struct dirent *e;
+            int any = 0;
+            while ((e = readdir(d))) {
+                if (strstr(e->d_name, ".ppm.meta")) {
+                    printf("  /var/lib/ppm/%s\n", e->d_name);
+                    any = 1;
+                }
+            }
+            closedir(d);
+            if (!any)
+                printf("  (无)\n");
+        } else
+            printf("  (无 /var/lib/ppm)\n");
+        return 0;
+    }
+    printf("PPM: 包 %s 内容:\n", argv[2]);
+    int n = for_each_entry(argv[2], list_cb, NULL);
+    printf("PPM: 共 %d 条目\n", n < 0 ? 0 : n);
+    return n < 0 ? 1 : 0;
+}
+
+/* ---- make ---- */
+static void write_entry(FILE *f, unsigned ino, const char *full,
+                        const char *rel, int isdir)
+{
+    char *data = NULL;
+    long len = 0;
+    if (!isdir) {
+        len = read_file(full, &data);
+        if (len < 0)
+            return;
+    }
+    emit_hdr(f, ino, isdir ? 0040755 : 0100755, len, rel);
+    emit_data(f, data, len);
+    if (data)
+        free(data);
+}
+
+static int walk(FILE *f, const char *dir, const char *rel,
+                unsigned *ino, int *nfiles)
+{
+    DIR *d = opendir(dir);
+    if (!d)
+        return 0;
+    struct dirent *e;
+    int added = 0;
+    while ((e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
+            continue;
+        char full[512], rl[512];
+        snprintf(full, sizeof full, "%s/%s", dir, e->d_name);
+        if (rel && rel[0])
+            snprintf(rl, sizeof rl, "%s/%s", rel, e->d_name);
+        else
+            snprintf(rl, sizeof rl, "%s", e->d_name);
+        struct stat st;
+        if (lstat(full, &st) < 0)
+            continue;
+        if (S_ISDIR(st.st_mode)) {
+            emit_hdr(f, (*ino)++, 0040755, 0, rl);
+            added += walk(f, full, rl, ino, nfiles);
+        } else if (S_ISREG(st.st_mode)) {
+            write_entry(f, (*ino)++, full, rl, 0);
+            added++;
+            (*nfiles)++;
+        }
+    }
+    closedir(d);
+    return added;
+}
+
+static int cmd_make(int argc, char **argv)
+{
+    if (argc < 4) {
+        fprintf(stderr, "用法: ppm make <dir> <name> [version] <out.ppm>\n");
+        return 1;
+    }
+    const char *dir = argv[2];
+    const char *name = argv[3];
+    const char *ver = "0.1";
+    const char *out = "pkg.ppm";
+    /* 参数:<dir> <name> [version] <out.ppm>;version 可选 */
+    int has_ver = 0;
+    if (argc > 4 && argv[4][0] && argv[4][0] != '/' && argv[4][0] != '-') {
+        /* 第 4 参像版本号(无路径分隔),则 out 取第 5 参 */
+        if (!strchr(argv[4], '/') && !strchr(argv[4], '\\')) {
+            ver = argv[4];
+            has_ver = 1;
+        }
+    }
+    if (has_ver && argc > 5)
+        out = argv[5];
+    else if (argc > 4)
+        out = argv[4];
+
+    FILE *f = fopen(out, "wb");
+    if (!f) {
+        perror(out);
+        return 1;
+    }
+    unsigned ino = 1;
+    /* PPMHEAD:元数据条目 */
+    char meta[256];
+    int ml = snprintf(meta, sizeof meta, "name: %s\nversion: %s\ndesc: %s\n",
+                      name, ver, name);
+    emit_hdr(f, ino++, 0100644, ml, "PPMHEAD");
+    emit_data(f, meta, ml);
+
+    int nfiles = 0;
+    walk(f, dir, "", &ino, &nfiles);
+
+    emit_hdr(f, 0, 0, 0, "TRAILER///");
+    fclose(f);
+    printf("PPM: 已生成 %s(包 %s %s,%d 文件)\n", out, name, ver, nfiles);
+    return 0;
+}
+
+static void usage(void)
+{
+    puts("PPM (Parlz Package Manager)\n"
+         "用法:\n"
+         "  ppm install <pkg.ppm> [...]     解包安装到 / 并登记\n"
+         "  ppm list [pkg.ppm]             列已安装包 / 列包内文件\n"
+         "  ppm make <dir> <name> [ver] <out.ppm>   打一个 .ppm 包");
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc < 2) {
+        usage();
+        return 1;
+    }
+    const char *sub = argv[1];
+    if (!strcmp(sub, "install"))
+        return cmd_install(argc, argv);
+    if (!strcmp(sub, "list") || !strcmp(sub, "ls"))
+        return cmd_list(argc, argv);
+    if (!strcmp(sub, "make"))
+        return cmd_make(argc, argv);
+    usage();
+    return 1;
+}
