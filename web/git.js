@@ -2,8 +2,8 @@
 // 八个视图，照 git.kernel.org 那一排（那排词本身是 cgit 的固定术语，按用户要求原样保留英文）。
 //
 // 数据来源：scripts/web-git-export.sh 从 git/parlz.git 导出的静态文件，全在 web/git/ 下 ——
-//   manifest.json · t/<顶层分片>.json（目录索引，按顶层条目切，进哪块才拉哪块）·
-//   blobs.bin（所有文本按路径序拼成的单文件）· log.json · c/<短哈希>.json
+//   manifest.js · t/<顶层分片>.js（目录索引，按顶层条目切，进哪块才拉哪块）·
+//   blobs.bin（所有文本按路径序拼成的单文件）· log.js · c/<短哈希>.js
 //
 // 三条要紧的规矩：
 //  1) **正文按 Range 取**。blobs.bin 是一百多 MB 的一个文件，点开某个文件只取它那一段；
@@ -21,12 +21,34 @@ const VIEWS = ["about", "summary", "refs", "log", "tree", "commit", "diff", "sta
 const MAX_LINES = 3000;          // 一屏最多渲染这么多行，剩下的给"取全文"
 const PAGE = 60;                 // log 一页多少条
 
-const parts = new Map();         // 分片文件名 → Promise(dirs)
-const misc = new Map();
+const parts = new Map();         // 分片文件名 → Promise(对象)
+const data = new Map();          // 相对路径 → Promise(对象)
 let man = null, host = null, live = true, seq = 0;
 let ctx = { path: "", sha: "" };
 
 const tt = (k, v) => (typeof root.ParlzI18n !== "undefined" ? root.ParlzI18n.t(k, v) : k);
+// 数据全部走 **`<script>` 注入**，不走 fetch：本站要求能双击 file:// 打开，
+// 而 file:// 下浏览器一律拦 fetch（Firefox 直接抛，Chrome 也是），一拦这页就"读不到导出数据"。
+// <script> 的相对路径在 file:// 下照样能加载；只有逐文件正文那次 Range 请求例外（那必须 http）。
+function loadData(rel) {
+  if (data.has(rel)) return data.get(rel);
+  const p = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = DATA + "/" + rel;
+    s.async = true;
+    s.onload = () => {
+      const v = root.ParlzGitData && root.ParlzGitData[rel];
+      if (v === undefined) reject(new Error(rel + " 加载了但没给出数据"));
+      else resolve(v);
+    };
+    s.onerror = () => reject(new Error("读不到 " + DATA + "/" + rel +
+      " —— 没部署，或还没跑 sh scripts/web-git-export.sh 生成"));
+    document.head.append(s);
+  });
+  data.set(rel, p);
+  p.catch(() => { data.delete(rel); });      // 失败的别缓存，下次还能试
+  return p;
+}
 function el(tag, cls, text) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -36,20 +58,10 @@ function el(tag, cls, text) {
 const mib = (b) => (b == null || isNaN(b) ? "" :
   b < 1024 ? b + " B" : b < 1048576 ? (b / 1024).toFixed(1) + " KiB" : (b / 1048576).toFixed(1) + " MiB");
 
-async function getJson(rel) {
-  if (misc.has(rel)) return misc.get(rel);
-  const p = fetch(DATA + "/" + rel, { cache: typeof CACHE_POLICY !== "undefined" ? CACHE_POLICY : "default" })
-    .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status + " " + rel); return r.json(); });
-  misc.set(rel, p);
-  return p;
-}
 async function dirsOfTop(top) {
   const part = man.parts.find((x) => x.k === top);
   if (!part) return {};
-  if (!parts.has(part.f)) {
-    parts.set(part.f, fetch(DATA + "/t/" + part.f, { cache: typeof CACHE_POLICY !== "undefined" ? CACHE_POLICY : "default" })
-      .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }));
-  }
+  if (!parts.has(part.f)) parts.set(part.f, loadData("t/" + part.f));
   return parts.get(part.f);
 }
 // 一个目录的子项：[{n,t,m,s,b,o,l}]，t = d 目录 / l 软链 / f 文件
@@ -71,7 +83,9 @@ function parseRoute() {
   const i = r.indexOf(":");
   return i < 0 ? { v: r, a: "" } : { v: r.slice(0, i), a: r.slice(i + 1) };
 }
-const hrefOf = (v, a) => fileOf() + "?r=" + (a ? v + ":" + a : v);
+// 路径里可能有空格、& 甚至 #，所以 query 参数一律 encodeURIComponent；
+// 读回来时在 render() 里 decodeURIComponent（只有 tree/file 两条路需要）。
+const hrefOf = (v, a) => fileOf() + "?r=" + (a ? encodeURIComponent(v + ":" + a) : encodeURIComponent(v));
 function go(v, a) {
   try { history.pushState({ cg: v + ":" + (a || "") }, "", hrefOf(v, a)); }
   catch (e) { /* file:// 下 Chrome 抛 SecurityError：视图照样切，只是地址不动 */ }
@@ -166,7 +180,13 @@ async function viewFile(path) {
     if (res.status === 206) text = await res.text();
     else { if (res.body && res.body.cancel) res.body.cancel(); }      // 没回 206 绝不把整包读进来
   } catch (err) { text = null; }
-  if (text == null) { box.append(el("p", "state bad", tt("git.ui.norange"))); return box; }
+  if (text == null) {
+    box.append(el("p", "state bad", tt("git.ui.norange")));
+    const how = el("pre", "cg-msg");
+    how.textContent = "cd web && python3 -m http.server 8000     # 然后开 http://127.0.0.1:8000/git.html";
+    box.append(how);
+    return box;
+  }
   const lines = text.split("\n");
   if (lines.length && lines[lines.length - 1] === "") lines.pop();
   const shown = Math.min(lines.length, MAX_LINES);
@@ -185,7 +205,7 @@ async function viewFile(path) {
 
 /* ---------- log ---------- */
 async function viewLog(off) {
-  const log = await getJson("log.json");
+  const log = await loadData("log.js");
   const start = Number(off) || 0;
   ctx.sha = (log[start] || log[0] || {}).h ? log[start].h.slice(0, 12) : ctx.sha;
   const box = shell("log");
@@ -210,7 +230,7 @@ function row0(node) { const f = document.createDocumentFragment(); f.append(node
 
 /* ---------- commit / diff ---------- */
 async function viewCommit(sha, wantDiff) {
-  const c = await getJson("c/" + (sha || man.short) + ".json");
+  const c = await loadData("c/" + (sha || man.short) + ".js");
   ctx.sha = c.s;
   const box = shell(wantDiff ? "diff" : "commit");
   box.append(crumbs(""));
@@ -264,7 +284,7 @@ async function viewAbout() {
   return box;
 }
 async function viewRefs() {
-  const log = await getJson("log.json");
+  const log = await loadData("log.js");
   const box = shell("refs");
   const tb = el("tbody");
   const tr = el("tr");
@@ -289,7 +309,7 @@ async function viewRefs() {
   return box;
 }
 async function viewSummary() {
-  const log = await getJson("log.json");
+  const log = await loadData("log.js");
   const last = log[0] || {};
   ctx.sha = last.h ? last.h.slice(0, 12) : man.short;
   const box = shell("summary");
@@ -321,7 +341,7 @@ async function viewSummary() {
   return box;
 }
 async function viewStats() {
-  const log = await getJson("log.json");
+  const log = await loadData("log.js");
   const byAuthor = new Map(), byDay = new Map();
   for (const c of log) {
     byAuthor.set(c.a, (byAuthor.get(c.a) || 0) + 1);
@@ -363,8 +383,10 @@ async function render() {
   let node;
   try {
     if (!man) throw new Error(tt("git.ui.nodata"));
-    if (v === "tree") node = await viewTree(decodeURIComponent(a || ""));
-    else if (v === "file") node = await viewFile(decodeURIComponent(a || ""));
+    // URLSearchParams.get() 已经解过一次百分号编码，这里**不能再 decode**
+    // （路径里真有个 % 的话，再解一次会 URIError 抛出来）
+    if (v === "tree") node = await viewTree(a);
+    else if (v === "file") node = await viewFile(a);
     else if (v === "log") node = await viewLog(a);
     else if (v === "commit") node = await viewCommit(a || man.short, false);
     else if (v === "diff") node = await viewCommit(a || man.short, true);
@@ -383,4 +405,37 @@ async function render() {
   host.append(el("p", "cg-made", "last export" + " " +
     (man && man.generated ? man.generated.slice(0, 10) : "—") +
     (man ? " · " + man.repo + " @ " + (man.short || "—") : "")));
-  if (root.ParlzI18n) root.ParlzI18n.app
+  if (root.ParlzI18n) root.ParlzI18n.apply(document.documentElement.dataset.lang);
+}
+
+function mount(container) {
+  const box = container.querySelector("#cgit");
+  if (!box) return null;
+  live = true;
+  host = box;
+  const onClick = (e) => {
+    const a = e.target && e.target.closest ? e.target.closest("a[data-cg]") : null;
+    if (!a) return;
+    e.preventDefault();
+    const val = a.dataset.cg;
+    const i = val.indexOf(":");
+    go(i < 0 ? val : val.slice(0, i), i < 0 ? "" : val.slice(i + 1));
+  };
+  box.addEventListener("click", onClick);
+  const onRoute = () => { render(); };
+  root.addEventListener("parlz:route", onRoute);
+  (async () => {
+    try { man = await loadData("manifest.js"); }
+    catch (e) { man = null; }
+    render();
+  })();
+  return () => {
+    live = false;
+    host = null;
+    box.removeEventListener("click", onClick);
+    root.removeEventListener("parlz:route", onRoute);
+  };
+}
+
+root.ParlzGit = { mount, views: VIEWS };
+})(typeof window !== "undefined" ? window : globalThis);

@@ -147,6 +147,21 @@ else
     echo "gen-fatboot: 缺 $EFI64_EFI, 跳过 UEFI(OVMF) 路径(SeaBIOS Legacy 不受影响)"
 fi
 
+# ---- 4b. 许可证文本: vmlinuz 就在这个分区上, 文本必须跟着它走 ----
+# GPLv2 §3: 分发目标代码时要随附许可证全文(或书面要约)。这个 FAT16 分区
+# 装的就是**改过的 Linux 内核**, 单独拿去也能引导 —— 所以许可证不能只放在
+# 根分区里, 引导分区自己得有一份。文件名用 8.3 安全的形式。
+# 文本的唯一来源是 third_party/licenses/PARLZ-MEDIA-LICENSE.txt(build-userland.sh
+# 把同一份放到 rootfs 的 /LICENSE.TXT, ISO 与已安装根因此与这里逐字一致);
+# 别在这两处各写一份, 会漂移。
+MEDIA_LIC=/mnt/f/Linux/Parlz/third_party/licenses/PARLZ-MEDIA-LICENSE.txt
+GPL2=/mnt/f/Linux/Parlz/third_party/licenses/linux-kernel/COPYING
+[ -s "$MEDIA_LIC" ] || { echo "gen-fatboot: 缺 $MEDIA_LIC" >&2; exit 1; }
+[ -s "$GPL2" ]      || { echo "gen-fatboot: 缺 $GPL2(先跑 scripts/vendor-licenses.sh)" >&2; exit 1; }
+mcopy -o -i "$IMG" "$MEDIA_LIC" ::/LICENSE.TXT
+mcopy -o -i "$IMG" "$GPL2" ::/COPYING.TXT
+echo "gen-fatboot: 引导分区已放 LICENSE.TXT + COPYING.TXT(GPLv2 全文)"
+
 # ---- 5. 独立 oracle 校验 ----
 # (a) dosfsck: 文件系统结构必须无错
 echo "gen-fatboot: 校验 dosfsck..."
@@ -175,13 +190,23 @@ if mount -o loop,ro "$IMG" "$MNT" 2>/dev/null; then
     ls -la "$MNT" | sed 's/^/    /'
     M1=$(md5sum "$MNT/vmlinuz" 2>/dev/null | cut -d' ' -f1)
     M2=$(md5sum "$VML" | cut -d' ' -f1)
+    # 许可证文本必须真在镜像里(mcopy 失败不会让构建停, 只能在挂载后核):
+    # COPYING.TXT 是 GPLv2 全文(~18 KB), LICENSE.TXT 是分层授权说明。
+    LC_OK=1
+    [ -s "$MNT/LICENSE.TXT" ] || { echo "gen-fatboot: 缺 LICENSE.TXT" >&2; LC_OK=0; }
+    [ "$(wc -c < "$MNT/COPYING.TXT" 2>/dev/null || echo 0)" -gt 10000 ] \
+      || { echo "gen-fatboot: COPYING.TXT 缺失或不是 GPLv2 全文" >&2; LC_OK=0; }
+    grep -q "GNU GENERAL PUBLIC LICENSE" "$MNT/COPYING.TXT" 2>/dev/null \
+      || { echo "gen-fatboot: COPYING.TXT 内容不是 GPLv2" >&2; LC_OK=0; }
     umount "$MNT" 2>/dev/null || true
     if [ "$M1" != "$M2" ]; then
         echo "gen-fatboot: 镜像内 vmlinuz($M1) != 产物($M2), 中止" >&2
         exit 1
     fi
+    [ "$LC_OK" = 1 ] || exit 1
     [ -f "$MNT/ldlinux.sys" ] || true
     echo "gen-fatboot: 镜像内 vmlinuz md5 与产物一致($M1)"
+    echo "gen-fatboot: 许可证文本进镜像 OK(LICENSE.TXT + COPYING.TXT/GPLv2)"
 else
     echo "gen-fatboot: 警告: 宿主无法 loop 挂载复核(跳过)"
 fi

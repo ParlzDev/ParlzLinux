@@ -68,7 +68,7 @@ async function run(line) {
 
 (async () => {
   /* ---------- 1. 真机种子 ---------- */
-  check("VFS: /bin 有 77 项（与真机 ls -l 一致）", sys.vfs.list("/bin").length === 77, sys.vfs.list("/bin").length);
+  check("VFS: /bin 有 79 项（与真机 ls -l 一致）", sys.vfs.list("/bin").length === 79, sys.vfs.list("/bin").length);
   check("VFS: /usr/bin 有 14 项（全是 busybox 软链）", sys.vfs.list("/usr/bin").length === 14, sys.vfs.list("/usr/bin").length);
   check("VFS: /bin/ls → ../sbin/busybox", sys.vfs.lstat("/bin/ls").link === "../sbin/busybox");
   check("VFS: /sbin/busybox 大小 = 真机 2501752", sys.vfs.stat("/sbin/busybox").size === 2501752);
@@ -97,8 +97,12 @@ async function run(line) {
   r = await run("pm install core");
   check("pm: 从官网 www.parlz.com/feed 下载（不是本地相对路径）",
         r.text.includes("pm: 从 http://www.parlz.com/feed 下载 core.pm"), JSON.stringify(r.text.slice(0, 90)));
+  const real = parseCpio(fs.readFileSync(path.join(WEB, "feed", "core.pm")));
   check("pm: install core 完成", r.text.includes("pm: core 安装完成"), JSON.stringify(r.text.slice(-120)));
-  check("pm: 与真机同样报 348 个成员", r.text.includes("共 348 个成员"),
+  // 成员数不写死: 从**同一个 .pm** 解析出来对数 —— 换 feed 内容不用来改测试,
+  // 而"演示少装了几个成员"这类偏差照样会被抓住。
+  check(`pm: 解出的成员数与 core.pm 实际条目数一致（${real.length}）`,
+        r.text.includes(`共 ${real.length} 个成员`),
         JSON.stringify((r.text.match(/共 \d+ 个成员/g) || [])[0]));
 
   const nano = sys.vfs.stat("/bin/nano");
@@ -106,10 +110,18 @@ async function run(line) {
   check("pm: /bin/nano 是真 ELF（真字节）", nano && nano.data && nano.data[0] === 0x7f && nano.data[1] === 0x45);
   check("pm: /bin/bc 是软链 ../sbin/busybox",
         sys.vfs.lstat("/bin/bc").t === "l" && sys.vfs.lstat("/bin/bc").link === "../sbin/busybox");
-  check("pm: /usr/bin 补到 284 项（322 条软链分落 bin/usr-bin）",
-        sys.vfs.list("/usr/bin").length === 284, sys.vfs.list("/usr/bin").length);
+  // 索引里每个 usr/bin 成员都必须在装完的 VFS 里出现（数量写死会在换 feed 时烂掉）
+  const wantUsr = real.filter((m) => m.name.startsWith("usr/bin/")).map((m) => m.name.slice(8));
+  const haveUsr = sys.vfs.list("/usr/bin");
+  const missUsr = wantUsr.filter((n) => !haveUsr.includes(n));
+  check(`pm: core.pm 里 ${wantUsr.length} 个 usr/bin 成员全建出来`,
+        wantUsr.length > 0 && missUsr.length === 0, missUsr.slice(0, 6).join(","));
+  const wantBin = real.filter((m) => m.name.startsWith("bin/")).map((m) => m.name.slice(4));
+  const haveBin = sys.vfs.list("/bin");
+  const missBin = wantBin.filter((n) => !haveBin.includes(n));
+  check(`pm: core.pm 里 ${wantBin.length} 个 bin 成员全建出来`,
+        wantBin.length > 0 && missBin.length === 0, missBin.slice(0, 6).join(","));
 
-  const real = parseCpio(fs.readFileSync(path.join(WEB, "feed", "core.pm")));
   const nanoMem = real.find((m) => m.name === "bin/nano");
   const digest = (u8) => crypto.createHash("sha256").update(Buffer.from(u8)).digest("hex");
   check("pm: /bin/nano 与真包成员 sha256 逐字节一致", digest(nano.data) === digest(nanoMem.data),
@@ -207,19 +219,29 @@ async function run(line) {
   check("pm: 重装 core 成功（可重复）", r.text.includes("pm: core 安装完成"));
 
   /* ---------- 7. gcc：大包按真清单登记 ---------- */
+  // 期望值一律从 web/feed/gcc.list **现算**，不写死数字：写死的 11773 / 5503 / 454.7 MiB
+  // 每次重打包工具链都会失真（2026-10-01 补 dev 链接名后变成 12297 / 565 MiB，
+  // 那三条判据当场红 —— 红的是判据过期，不是产品）。
+  const man = fs.readFileSync(path.join(WEB, "feed", "gcc.list"), "utf8").split("\n")
+    .filter((l) => l && l[0] !== "#").map((l) => l.split("\t"));
+  const isDir = (m) => (parseInt(m, 8) & 0o170000) === 0o40000;
+  const isLnk = (m) => (parseInt(m, 8) & 0o170000) === 0o120000;
+  const expIncFiles = man.filter((e) => e[0].startsWith("usr/include/") && !isDir(e[1]) && !isLnk(e[1])).length;
+  const expIncDirs  = man.filter((e) => (e[0] === "usr/include" || e[0].startsWith("usr/include/")) && isDir(e[1])).length;
+  const expNkLinks  = man.filter((e) => isLnk(e[1])).length;
+  const expMiB      = (fs.statSync(path.join(WEB, "feed", "gcc.pm")).size / 1048576).toFixed(1);
+
   r = await run("pm install gcc");
-  check("pm: gcc 走真清单（11773 个成员）", r.text.includes("11773"), JSON.stringify((r.text.match(/登记 \d+ 个成员/) || [])[0]));
+  check("pm: gcc 走真清单（" + man.length + " 个成员）", r.text.includes(String(man.length)), JSON.stringify((r.text.match(/登记 \d+ 个成员/) || [])[0]));
   check("pm: gcc 后 /bin/gcc → /opt/toolchain/gcc-13/bin/gcc",
         sys.vfs.lstat("/bin/gcc").t === "l" && sys.vfs.lstat("/bin/gcc").link === "/opt/toolchain/gcc-13/bin/gcc");
   let incFiles = 0, incDirs = 0;
   sys.vfs.walkAll("/usr/include", (p, n) => { if (n.t === "f") incFiles++; else if (n.t === "d") incDirs++; });
-  check("pm: gcc 后 /usr/include 子树 = 真清单的 5503 文件 + 271 子目录",
-        incFiles === 5503 && incDirs - 1 === 271, incFiles + " files / " + (incDirs - 1) + " dirs");
+  check("pm: gcc 后 /usr/include 子树 = 真清单的 " + expIncFiles + " 文件 + " + expIncDirs + " 子目录",
+        incFiles === expIncFiles && incDirs === expIncDirs, incFiles + " files / " + incDirs + " dirs");
 
-  // 拿真清单逐条核 VFS：抽样的 24 条 + 全部 165 条软链，路径/类型/大小都要对上
-  const man = fs.readFileSync(path.join(WEB, "feed", "gcc.list"), "utf8").split("\n")
-    .filter((l) => l && l[0] !== "#").map((l) => l.split("\t"));
-  const sample = man.filter((_, i) => i % 500 === 0 || (parseInt(man[i][1], 8) & 0o170000) === 0o120000);
+  // 拿真清单逐条核 VFS：抽样的条目 + 全部 " + expNkLinks + " 条软链，路径/类型/大小都要对上
+  const sample = man.filter((_, i) => i % 500 === 0 || isLnk(man[i][1]));
   let mismatch = null, checked = 0;
   for (const [name, modeS, sizeS, link] of sample) {
     const mode = parseInt(modeS, 8), kind = mode & 0o170000;
@@ -406,8 +428,16 @@ async function run(line) {
   check("route -n: 路由表", r.text.includes("10.0.2.0") && r.text.includes("UG"), JSON.stringify(r.text.slice(0, 80)));
   r = await run("busybox ls /etc | head -2");
   check("busybox: 多路复用 applet", r.text.trim().split("\n").length === 2, JSON.stringify(r.text));
-  r = await run("opkg --version");
-  check("opkg: 版本（委托 pm 的同一套 feed）", r.text.includes("0.8.0"), JSON.stringify(r.text));
+  for (const [cmd, line] of [["dpkg", "dpkg -Parlz/1.0.0 (基于 pkgcore 的移植实现)"],
+                             ["rpm", "RPM 包管理器(Parlz 移植实现) 1.0.0"],
+                             ["apt", "apt 1.0.0-parlz (Parlz 移植实现; 解包安装由 dpkg 完成)"],
+                             ["yum", "yum 1.0.0-parlz (Parlz 移植实现; 解包安装由 rpm 完成)"]]) {
+    r = await run(`${cmd} --version`);
+    check(`${cmd}: 版本行与真机逐字一致`, r.text.trim() === line, JSON.stringify(r.text));
+  }
+  r = await run("apt list");
+  check("apt list: 演示里转交 pm 列 feed", r.text.includes("core") || r.text.includes("gcc"),
+    JSON.stringify(r.text.slice(0, 90)));
   r = await run("time echo hi");
   check("time: 打 real/user/sys 且真计时", r.text.includes("hi") && r.text.includes("real") && r.text.includes("user"), JSON.stringify(r.text.slice(0, 60)));
   r = await run("lsmod");
@@ -443,10 +473,13 @@ async function run(line) {
 
   /* ---------- 16. 产物级：feed 里的 pm.pm 必须带官网源 ---------- */
   const pmPkg = parseCpio(fs.readFileSync(path.join(WEB, "feed", "pm.pm")));
-  const conf = pmPkg.find((m) => m.name === "etc/pm/feeds.conf");
-  check("产物: feed/pm.pm 里的 /etc/pm/feeds.conf = 官网地址（装 pm 不会把源改回开发机）",
-        conf && Buffer.from(conf.data).toString("utf8").trim() === "http://www.parlz.com/feed",
-        conf ? JSON.stringify(Buffer.from(conf.data).toString("utf8")) : "包里没有 feeds.conf");
+  const conf = pmPkg.find((m) => m.name === "etc/pm/feeds.conf" ||
+                                 m.name === "/etc/pm/feeds.conf");
+  // 与产品端同一条硬规则（AGENTS: 包体不许带 feeds.conf）：装包不得改写机器的
+  // 源配置 —— 以前带了，结果"任何一次旧包安装都把源改回旧地址"。
+  // 所以这里断的是**不存在**，不是"存在且内容正确"。
+  check("产物: feed/pm.pm 里不含 /etc/pm/feeds.conf（装包不改源配置）",
+        !conf, conf ? JSON.stringify(Buffer.from(conf.data || []).toString("utf8")) : undefined);
   const idx = fs.readFileSync(path.join(WEB, "feed", "Packages"), "utf8").trim().split("\n");
   const coreLine = idx.find((l) => l.startsWith("core "));
   const coreSize = fs.statSync(path.join(WEB, "feed", "core.pm")).size;
@@ -456,6 +489,21 @@ async function run(line) {
   const pmSize = fs.statSync(path.join(WEB, "feed", "pm.pm")).size;
   check("产物: Packages 里 pm 的尺寸 = 实际文件尺寸",
         pmLine && Number(pmLine.split(/\s+/)[3]) === pmSize, pmLine + " vs " + pmSize);
+  // gcc/clang 也断同一件事: 索引尺寸 = 盘上尺寸, 且 system.js 里 PACKAGES 的
+  // version/size 与索引一致(演示显示的版本/大小必须是真值 —— 重打包后这三处
+  // 任何一处忘了改, 站就在说谎)。PACKAGES 是 IIFE 内的 const, 取不到对象,
+  // 所以直接按字面量解析源码。
+  const sysSrc = fs.readFileSync(path.join(WEB, "system.js"), "utf8");
+  for (const big of ["gcc", "clang"]) {
+    const bl = idx.find((l) => l.startsWith(big + " "));
+    const bs = fs.statSync(path.join(WEB, "feed", big + ".pm")).size;
+    check("产物: Packages 里 " + big + " 的尺寸 = 实际文件尺寸",
+          bl && Number(bl.split(/\s+/)[3]) === bs, bl + " vs " + bs);
+    const lit = sysSrc.match(new RegExp(big + ':\\s*\\{\\s*version:\\s*"([^"]*)",\\s*file:[^,]*,\\s*size:\\s*(\\d+)'));
+    check("产物: 演示 PACKAGES 的 " + big + " 版本/尺寸与索引一致",
+          !!lit && lit[1] === bl.split(/\s+/)[1] && Number(lit[2]) === bs,
+          lit ? lit[1] + "/" + lit[2] + " vs " + bl : "system.js 里找不到 " + big + " 的 PACKAGES 字面量");
+  }
 
   /* ---------- 17. 站点上没部署 .list 时：像真机一样读真包（流式扫成员头）---------- */
   const sys3 = makeSys({ hideLists: true, stream: true });
@@ -465,15 +513,26 @@ async function run(line) {
     const rc = await sys3.run(line, io);
     return { text: out.join(""), rc };
   };
-  r = await run3("pm install gcc");
-  check("缺清单: 自动流式扫真包（真的读了 454.7 MiB 的头，数据不落盘）",
-        r.text.includes("站点上没有 gcc.list") && r.text.includes("扫描完成"), JSON.stringify(r.text.slice(0, 120)));
-  check("缺清单: 登记出的成员数与真清单一致（11773）", r.text.includes("11773") || r.text.includes("登记 11773 个"),
+  r = await run3("pm install gcc --scan");
+  // 同上一节：期望值从 gcc.list 现算（这条走的是"站点没部署清单 → 流式扫真包"
+  // 的分支，扫出来的成员数必须与清单一致，所以两边都取真值而不是写死）。
+  // ★ 命令带 --scan：gcc.pm 现在 564 MiB，已越过演示"清单缺失时自动扫描"的
+  //   512 MiB 上限(AUTO_SCAN) —— 不加 --scan 得到的是"太大，需 --scan 或部署
+  //   .list"那句提示，而不是扫描结果（2026-10-01 补 dev 链接名后包体积涨过线，
+  //   这四条判据就是因此变红的）。
+  const man3 = fs.readFileSync(path.join(WEB, "feed", "gcc.list"), "utf8").split("\n")
+    .filter((l) => l && l[0] !== "#").map((l) => l.split("\t"));
+  const dirMode = (m) => (parseInt(m, 8) & 0o170000) === 0o40000;
+  const lnkMode = (m) => (parseInt(m, 8) & 0o170000) === 0o120000;
+  const expInc3 = man3.filter((e) => e[0].startsWith("usr/include/") && !dirMode(e[1]) && !lnkMode(e[1])).length;
+  check("缺清单+--scan: 流式扫真包（真的读了 " + (fs.statSync(path.join(WEB, "feed", "gcc.pm")).size / 1048576).toFixed(1) + " MiB 的头，数据不落盘）",
+        r.text.includes("扫描完成"), JSON.stringify(r.text.slice(0, 120)));
+  check("缺清单+--scan: 登记出的成员数与真清单一致（" + man3.length + "）", r.text.includes(String(man3.length)),
         JSON.stringify((r.text.match(/登记 \d+ 个/) || [])[0]));
   let inc3 = 0;
   sys3.vfs.walkAll("/usr/include", (p, n) => { if (n.t === "f") inc3++; });
-  check("缺清单: /usr/include 子树仍是真清单的 5503 个文件", inc3 === 5503, inc3);
-  check("缺清单: /bin/gcc 软链目标正确",
+  check("缺清单+--scan: /usr/include 子树仍是真清单的 " + expInc3 + " 个文件", inc3 === expInc3, inc3);
+  check("缺清单+--scan: /bin/gcc 软链目标正确",
         sys3.vfs.lstat("/bin/gcc") && sys3.vfs.lstat("/bin/gcc").link === "/opt/toolchain/gcc-13/bin/gcc");
   r = await run3("pm install clang");
   check("缺清单且 >512 MiB: 不自动下载，提示 --scan 或部署 .list",
@@ -873,7 +932,170 @@ async function run(line) {
     const gitReadme = fs.readFileSync(path.join(__dirname, "..", "git", "README.md"), "utf8");
     check("仓库目录: git/README.md 写清了放什么（裸库）、两个地址、只读发布与产物不进仓库",
           /parlz\.git/.test(gitReadme) && /git\.os\.parlz\.com/.test(gitReadme) &&
-          /只读/.test(gitReadme) && /不放产物|不放产物/.test(gitReadme));
+          /只读镜像/.test(gitReadme) && /不进仓库/.test(gitReadme) &&
+          /web\/feed/.test(gitReadme) && /git-init-repo\.sh/.test(gitReadme) &&
+          /web-git-export\.sh/.test(gitReadme));
+  }
+
+  /* ---------- 26. 仓库浏览器（git.js + 导出器 + .gitignore） ---------- */
+  {
+    const gitJs = fs.readFileSync(path.join(WEB, "git.js"), "utf8");
+    const rSrc2 = fs.readFileSync(path.join(WEB, "router.js"), "utf8");
+    const gitHtml = fs.readFileSync(path.join(WEB, "git.html"), "utf8");
+    const exp = fs.readFileSync(path.join(__dirname, "web-git-export.js"), "utf8");
+    const ign = fs.readFileSync(path.join(__dirname, "..", ".gitignore"), "utf8");
+    check("浏览器: 八个视图词按 git.kernel.org 那排（about summary refs log tree commit diff stats）",
+          JSON.stringify(["about", "summary", "refs", "log", "tree", "commit", "diff", "stats"]) ===
+          JSON.stringify([...gitJs.match(/\["about", "summary", "refs", "log", "tree", "commit", "diff", "stats"\]/)][0] ?
+            ["about", "summary", "refs", "log", "tree", "commit", "diff", "stats"] : []), "");
+    check("浏览器: 仓库里的字节只当文本插（没有任何 .innerHTML = 赋值）",
+          !/\.innerHTML\s*=/.test(gitJs));
+    check("浏览器: 正文按 Range 取，服务端没回 206 就立刻 cancel —— 不然点一下就把一百多 MB 拖走",
+          /headers: \{ Range: "bytes="/.test(gitJs) &&
+          /res\.status === 206/.test(gitJs) &&
+          /res\.body && res\.body\.cancel\) res\.body\.cancel\(\)/.test(gitJs));
+    check("浏览器: 路由走 query（?r=tree:x），不抢 settings.js 的 #lang=&theme= 那个槽",
+          /"\?r="/.test(gitJs) && !/location\.hash/.test(gitJs));
+    check("浏览器: 离开这一页会摘掉自己的监听（live=false + removeEventListener）",
+          /live = false/.test(gitJs) && /removeEventListener\("parlz:route"/.test(gitJs) &&
+          /box\.removeEventListener\("click", onClick\)/.test(gitJs));
+    check("浏览器: 数据走 <script> 注入（file:// 双击是硬需求，fetch 在那儿必挂）",
+          /function loadData\(rel\)/.test(gitJs) && /document\.createElement\("script"\)/.test(gitJs) &&
+          /ParlzGitData\[rel\]/.test(gitJs) &&
+          (gitJs.match(/fetch\(/g) || []).length === 1,
+          "fetch 出现 " + (gitJs.match(/fetch\(/g) || []).length + " 次");
+    check("浏览器: 只有逐文件正文用 fetch + Range，失败时给的是『怎么起本地 http』的实话",
+          /fetch\(DATA \+ "\/" \+ man\.blobFile/.test(gitJs) &&
+          /python3 -m http\.server/.test(gitJs));
+    check("浏览器: 读不到数据的报错点名生成脚本，不是笼统一句失败",
+          /web-git-export\.sh/.test(gitJs) && !/manifest\.json/.test(gitHtml));
+    check("翻页: router 认得 git.js 这一页的模块，并且同页只换 query 时让路（发 parlz:route，不重渲染）",
+          /"git\.html": \["git\.js"\]/.test(rSrc2) && /PAGE_MODULE = \{[^}]*"git\.html": "ParlzGit"/.test(rSrc2) &&
+          /if \(file === currentFile\) \{ dispatchEvent\(new CustomEvent\("parlz:route"\)\); return; \}/.test(rSrc2));
+    check("git 页: 有 #cgit 挂载点、烘了两句实话（没导出数据时也不是空白），并加载 git.js",
+          /id="cgit" class="cgit"/.test(gitHtml) && /data-i18n="git\.ui\.nodata"/.test(gitHtml) &&
+          /data-i18n="git\.ui\.howto"/.test(gitHtml) && /<script src="git\.js"><\/script>/.test(gitHtml));
+    check("样式: 浏览器那一排/面包屑/带行号正文用的是全站同一套 token（没有再分一套皮肤）",
+          /\.cgit-bar \{ font: 13px\/1\.6 var\(--mono\)/.test(css) && /\.cg-n \{[^}]*user-select: none/.test(css) &&
+          !/\.gitpage/.test(css));
+    const uiKeys = ["git.ui.lines", "git.ui.more", "git.ui.norange", "git.ui.noblob",
+                    "git.ui.initial", "git.ui.nodata", "git.ui.howto"];
+    const i18nForBrowser = fs.readFileSync(path.join(WEB, "i18n.js"), "utf8");
+    const nLoc = (i18nForBrowser.match(/^  "[A-Za-z-]+": \{$/gm) || []).length;
+    const short = uiKeys.filter((k) =>
+      (i18nForBrowser.match(new RegExp('"' + k.replace(/\./g, "\\.") + '":', "g")) || []).length !== nLoc);
+    check("语言: 浏览器里那 7 条句子在全部 " + nLoc + " 张语言表里都齐（视图词与字段名按 cgit 习惯留英文）",
+          nLoc === 11 && short.length === 0, "缺: " + short.join(","));
+    check("导出器: 产出 manifest.js + 按顶层切的目录索引 js + 单一 blobs.bin + log/commit 详情，且索引里有 Range 偏移",
+          /function dataFile\(rel, obj\)/.test(exp) && /ParlzGitData\[/.test(exp) &&
+          /dataFile\("manifest\.js", \{/.test(exp) && /dataFile\("t\/" \+ file, val\.dirs\)/.test(exp) &&
+          /dataFile\("log\.js", log\)/.test(exp) && /dataFile\("c\/" \+ sh \+ "\.js", out\)/.test(exp) &&
+          /blobs\.bin/.test(exp) && /o: byPath\.has\(/.test(exp));
+    check("导出器: 二进制与超限文件不进正文库（cat-file --batch + looksText + MAX_TEXT）",
+          /cat-file", "--batch/.test(exp) && /looksText/.test(exp) && /MAX_TEXT/.test(exp));
+    const trailingComment = ign.split("\n").find((l) => l.trim() && l.trim()[0] !== "#" && /\s#\S/.test(l));
+    check("仓库: .gitignore 的模式行不许带行尾注释（gitignore 不支持，会把整条模式变成永远匹配不上——第一版就是这样把内核树漏掉的）",
+          !trailingComment, trailingComment || "");
+    check("仓库: 白名单里必须仍有内核树 / userland / scripts / web（少了就等于仓库没内容）",
+          /^!\//.test("") === false && ["linux-7.2.5", "userland", "scripts", "web"].every(
+            (d) => new RegExp("^!/" + d + "/$", "m").test(ign)) &&
+          /^\/\*$/m.test(ign) && /!\/NTCLKS-main\/$/m.test(ign));
+    check("仓库: 分发物与仓库本体都不进 git（feed / rootfs / downloads / web\/git 导出 / git\/）",
+          /^\/web\/feed\/$/m.test(ign) && /^\/web\/rootfs\/$/m.test(ign) &&
+          /^\/web\/downloads\/$/m.test(ign) && /^\/web\/git\/$/m.test(ign) && /^\/git\/$/m.test(ign));
+  }
+
+  /* ---------- 19. 授权/合规: 交付介质必须带许可证文本, 演示不许自创一份 ---------- */
+  {
+    const ROOTDIR = path.join(__dirname, "..");
+    const licRoot = path.join(ROOTDIR, "third_party", "licenses");
+    const media = fs.readFileSync(path.join(licRoot, "PARLZ-MEDIA-LICENSE.txt"), "utf8");
+    const licTop = fs.readFileSync(path.join(ROOTDIR, "LICENSE"), "utf8");
+    const parlzLic = fs.readFileSync(path.join(ROOTDIR, "PARLZ.LICENSE"), "utf8");
+    const bu = fs.readFileSync(path.join(__dirname, "build-userland.sh"), "utf8");
+    const gf = fs.readFileSync(path.join(__dirname, "gen-fatboot.sh"), "utf8");
+    const vend = fs.readFileSync(path.join(__dirname, "vendor-licenses.sh"), "utf8");
+
+    const r = await run("cat /LICENSE.TXT");
+    check("授权: 演示里 cat /LICENSE.TXT 与仓库那份介质副本逐字相同(不是另写一份)",
+          r.text === media || r.text.replace(/\n$/, "") === media.replace(/\n$/, ""),
+          JSON.stringify(r.text.slice(0, 60)));
+    // 演示里的 /usr/share/licenses 条目(名字 + 字节数)必须等于仓库里的真文件。
+    // LICENSES 是 system.js 里 IIFE 内的 const, 取不到对象 → 按字面量解析源码
+    // (与 PACKAGES 那两条同一手法)。
+    const sysSrc2 = fs.readFileSync(path.join(WEB, "system.js"), "utf8");
+    const licBlock = (sysSrc2.match(/const LICENSES = \[([\s\S]*?)\];/) || ["", ""])[1];
+    const licRows = [...licBlock.matchAll(/\["([^"]+)",\s*"([^"]+)",\s*(\d+)\]/g)]
+      .map((m) => [m[1], m[2], Number(m[3])]);
+    const rdSize = Number((sysSrc2.match(/LICENSES_README_SIZE = (\d+)/) || [])[1]);
+    const medSize = Number((sysSrc2.match(/MEDIA_LICENSE_SIZE = (\d+)/) || [])[1]);
+    let licBad = "";
+    for (const [comp, file, size] of licRows) {
+      const p = comp === "parlz" ? path.join(ROOTDIR, file) : path.join(licRoot, comp, file);
+      if (!fs.existsSync(p)) { licBad += comp + "/" + file + " 仓库里没有; "; continue; }
+      if (fs.statSync(p).size !== size) licBad += comp + "/" + file + " " + size + "≠" + fs.statSync(p).size + "; ";
+      const node = sys.vfs.stat("/usr/share/licenses/" + comp + "/" + file);
+      if (!node || node.size !== size) licBad += "演示里 " + comp + "/" + file + " 尺寸不对; ";
+    }
+    check("授权: 演示的 /usr/share/licenses 条目(名字+字节)与仓库真文件逐条一致",
+          licRows.length === 12 && licBad === "", licBad || "只解析到 " + licRows.length + " 条");
+    // 尺寸一律按**字节**比: 文本里有中文, `String.length` 是 UTF-16 码元数
+    // (media.length=1130) 而盘上是 UTF-8 字节数(1772) —— 直接比 length 会假红。
+    check("授权: /usr/share/licenses/README 与 /LICENSE.TXT 的字节数也对得上",
+          fs.statSync(path.join(licRoot, "README")).size === rdSize &&
+          Buffer.byteLength(media, "utf8") === medSize &&
+          (sys.vfs.stat("/LICENSE.TXT") || {}).size === medSize,
+          "README " + fs.statSync(path.join(licRoot, "README")).size + " vs " + rdSize +
+          " / LICENSE.TXT " + Buffer.byteLength(media, "utf8") + " vs " + medSize);
+    // 演示挂 src 延迟取字节 —— web/rootfs 里必须真有那份文件, 否则 cat 只会
+    // 说"没有实体字节"(站点少传文件是真实踩过的坑: 部署清单要点名新增文件)
+    const noBytes = licRows.map(([c, f]) => "usr/share/licenses/" + c + "/" + f)
+      .concat(["usr/share/licenses/README", "LICENSE.TXT"])
+      .filter((rel) => !fs.existsSync(path.join(WEB, "rootfs", rel)));
+    check("站点: 许可证文本已同步进 web/rootfs(演示 cat 取得到, 部署要一起传)",
+          noBytes.length === 0, noBytes.join(" "));
+    const catLic = await run("cat /usr/share/licenses/linux-kernel/COPYING");
+    check("授权: 演示里 cat 内核 COPYING 真读出 GPLv2 全文",
+          /GNU GENERAL PUBLIC LICENSE/.test(catLic.text) && /Version 2/.test(catLic.text),
+          JSON.stringify(catLic.text.slice(0, 70)));
+
+    const comps = ["linux-kernel", "busybox", "syslinux", "bash", "nano", "wget", "glibc", "openssl", "curl", "miniz"];
+    const missing = comps.filter((c) => {
+      const d = path.join(ROOTDIR, "third_party", "licenses", c);
+      return !fs.existsSync(d) || fs.readdirSync(d).length === 0;
+    });
+    check("授权: third_party/licenses 里 10 个上游组件的许可证全文齐", missing.length === 0, missing.join(" "));
+    check("授权: build-userland 整树拷进 rootfs 的 /usr/share/licenses(缺目录就中止)",
+          /for d in "\$LIC"\/\*\/; do/.test(bu) && /\$ROOT\/usr\/share\/licenses/.test(bu) &&
+          /exit 1/.test(bu.slice(bu.indexOf("third_party/licenses"), bu.indexOf("third_party/licenses") + 700)));
+    check("授权: 许可证文本取自仓库(vendor), 构建脚本不从宿主的 common-licenses 现拷",
+          /common-licenses/.test(vend) && !/cp[^\n]*common-licenses/.test(bu));
+    check("授权: 引导分区也放 LICENSE.TXT + COPYING.TXT 并有挂载复核",
+          /::\/LICENSE\.TXT/.test(gf) && /::\/COPYING\.TXT/.test(gf) && /COPYING\.TXT.*GPL|GPLv2 全文/.test(gf));
+
+    check("授权: 仓库根 LICENSE 说明分层(内核 GPL-2.0-only / Parlz 自有 PARLZ.LICENSE)",
+          /GPL-2\.0-only/.test(licTop) && /PARLZ\.LICENSE/.test(licTop) && /linux-7\.2\.5/.test(licTop));
+    // 中英两份都要有范围排除与 GPLv2-only 条款(只改一边就是"说了等于没做")
+    for (const tag of ["1.1.1", "12.2.1", "12.3.1"]) {
+      const n = (parlzLic.match(new RegExp(tag, "g")) || []).length;
+      check("授权: PARLZ.LICENSE 第 " + tag + " 条在中英文两侧都在", n >= 2, "出现 " + n + " 次");
+    }
+    check("授权: PARLZ.LICENSE 明确内核不在它的覆盖范围内",
+          /does \*\*not\*\* apply to/.test(parlzLic) && /不适用、也不试图重新授权/.test(parlzLic));
+    // 内核侧 Parlz 文件必须仍是 GPL-2.0 —— 改成 PARLZ.LICENSE 就是违规
+    const kidFiles = ["linux-7.2.5/include/linux/parlz.h", "linux-7.2.5/arch/x86/kernel/parlz.c"];
+    const kidBad = kidFiles.filter((f) => {
+      const p = path.join(ROOTDIR, f);
+      if (!fs.existsSync(p)) return true;
+      return !/SPDX-License-Identifier:\s*GPL-2\.0/.test(fs.readFileSync(p, "utf8"));
+    });
+    check("授权: 内核里的 Parlz 自有文件仍标 SPDX GPL-2.0(不能被重新授权)", kidBad.length === 0, kidBad.join(" "));
+    // .gitignore 是**白名单**: 根下的文件不在名单里就永远进不了仓库。
+    // 实测踩过: PARLZ.LICENSE/LICENSE 没被放行, git status 连 `??` 都不给,
+    // 于是"源码仓库里没有许可证文本"这件事毫无征兆。
+    const ign2 = fs.readFileSync(path.join(ROOTDIR, ".gitignore"), "utf8");
+    check("授权: 两份许可证文本在 .gitignore 白名单里(不然仓库里根本没有它们)",
+          /^!\/LICENSE$/m.test(ign2) && /^!\/PARLZ\.LICENSE$/m.test(ign2));
   }
 
   console.log("\n" + (fail ? "FAILED" : "ALL PASS") + ": " + pass + " passed, " + fail + " failed");

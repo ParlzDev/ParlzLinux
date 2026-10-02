@@ -330,6 +330,34 @@ td.cmd { text-align: end; white-space: nowrap; }
 .state { margin-top: 18px; color: var(--dim); }
 .state.bad { color: var(--err); }
 
+/* ---- 仓库浏览器（git.js 在 #cgit 里渲染）----
+   用的是全站同一套 token 与表格/代码块样式，这里只补三样它自己需要的东西：
+   视图词那一排（about summary refs log tree commit diff stats）、面包屑、带行号的正文。 */
+.cgit-bar { font: 13px/1.6 var(--mono); letter-spacing: .02em; margin-bottom: 14px;
+            word-spacing: .35em; }
+.cgit-bar a { color: var(--dim); text-decoration: none; }
+.cgit-bar a:hover { color: var(--accent); }
+.cgit-bar a.cg-on { color: var(--fg); }
+.cgit-bar a.cg-on::after { content: ""; }
+.cg-crumb { font: 13px/1.6 var(--mono); color: var(--faint); margin-bottom: 6px; overflow-wrap: anywhere; }
+.cg-crumb a { color: var(--dim); }
+.cg-crumb a:hover { color: var(--accent); }
+.cgit h2 { margin: 18px 0 8px; }
+.cgit table { margin-top: 8px; }
+.cgit dl { margin: 6px 0 0; }
+/* 正文：一行一行铺，行号靠左不参与选中复制（选代码时不用去掉序号） */
+.cg-blob { margin: 10px 0 0; border: 1px solid var(--line); background: var(--panel);
+           font: 13px/1.55 var(--mono); overflow-x: auto; }
+.cg-l { display: flex; }
+.cg-l:hover { background: var(--row); }
+.cg-n { flex: 0 0 4.5rem; text-align: end; padding-inline: 8px; color: var(--faint);
+        user-select: none; border-inline-end: 1px solid var(--line); }
+.cg-t { flex: 1 1 auto; padding-inline: 10px; white-space: pre; }
+.cg-msg { white-space: pre-wrap; margin: 8px 0; }
+.cg-made { margin-top: 16px; color: var(--faint); font-size: 12px; font-family: var(--mono); }
+.cg-bar { display: inline-block; height: 8px; background: var(--accent-soft);
+          border: 1px solid var(--line-hi); vertical-align: middle; }
+
 button.copy {
   background: none; border: none; padding: 0; color: var(--dim); font: inherit;
   cursor: pointer; transition: color .4s var(--ease), letter-spacing .4s var(--ease);

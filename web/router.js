@@ -20,6 +20,7 @@ const FILES = ["index.html", "packages.html", "download.html", "license.html", "
 const DEPS = {
   "index.html": ["codeshow.js"],
   "sim.html": ["system.js", "term.js", "sim.js"],
+  "git.html": ["git.js"],
 };
 const LEAVE_MS = 220;      // 淡出时长，和 style.css 里 pgOut 对齐（改一边要改另一边）
 const ENTER_MS = 360;      // 淡入时长，同上（pgIn）
@@ -37,6 +38,7 @@ const htmlCache = new Map();
 let canRoute = typeof fetch === "function" && typeof DOMParser === "function";
 let busy = false;
 let teardown = null;
+let currentFile = pageFile();     // 真文档里现在是哪一页（同页只换 query 时靠它让路）
 
 /* ---------- 顶部的细进度条：取页/加载脚本期间给一点"正在动"的反馈 ---------- */
 function bar(state) {
@@ -91,6 +93,7 @@ function ensureHeadAssets(doc) {
 }
 
 /* ---------- 部件装配：进一页就把这页的元素挂起来，返回"离开时的收尾" ---------- */
+const PAGE_MODULE = { "sim.html": "ParlzSim", "index.html": "ParlzCodeShow", "git.html": "ParlzGit" };
 function mountAll(main, file) {
   const stops = [];
   const run = (fn, arg) => {
@@ -98,8 +101,9 @@ function mountAll(main, file) {
     catch (e) { console.warn("parlz router: 部件装配失败", e); }
   };
   (root.ParlzWidgets || []).forEach((w) => run(w, main));
-  const page = file === "sim.html" ? root.ParlzSim : file === "index.html" ? root.ParlzCodeShow : null;
-  if (page && typeof page.mount === "function") run(page.mount, main);
+  const name = PAGE_MODULE[file];
+  const mod = name ? root[name] : null;
+  if (mod && typeof mod.mount === "function") run(mod.mount, main);
   return () => { stops.forEach((s) => { try { s(); } catch (e) { /* 收尾失败不拦翻页 */ } }); };
 }
 
@@ -131,6 +135,7 @@ function swap(doc, file) {
   const s = root.ParlzSettings;
   if (s) { s.applyLang(document.documentElement.dataset.lang); s.syncLinks(); }
   markCurrent(file);
+  currentFile = file;
   teardown = mountAll(live, file);
   return true;
 }
@@ -233,6 +238,9 @@ document.addEventListener("click", (e) => {
 addEventListener("popstate", () => {
   const file = pageFile();
   if (!canRoute) return;
+  // 同一页只是 query 变了（仓库浏览器自己的 ?r=tree:userland 这类视图切换）：
+  // 不该重渲染整页，发个事件让那一页自己回去读路由
+  if (file === currentFile) { dispatchEvent(new CustomEvent("parlz:route")); return; }
   goTo(file, { push: false, scroll: (history.state && history.state.scroll) || 0 })
     .then((ok) => { if (!ok) location.reload(); });
 });

@@ -3,6 +3,207 @@
 > 基于 Linux 7.2.5 就地改造的操作系统内核 + 自研静态用户空间。
 > 本文件记录**当前实际可用的能力**与**最近修复的问题**。
 
+## 2026-10-02 (20) 授权分层 + 交付介质带上许可证文本 ✅
+
+用户问两件事：这一轮改没改内核源码、能不能用自己的许可证（仓库根 `PARLZ.LICENSE`）开源。
+
+- **这一轮（动态编译那轮）没动 `linux-7.2.5/`**：改的是 `scripts/`（build-toolchain /
+  build-pm-packages / build-userland / pm-verify / 新增 toolchain-dyn-verify /
+  web-demo-test）、`userland/`（parlz-boot-body.sh、tooltest.sh.in、init.c）、`web/system.js`
+  与文档。内核侧 Parlz 文件的 mtime 还停在 09-11~09-27。
+- **项目整体确实改了内核**（标识层三处 + `setup.ld` 填充修复 + defconfig/netfilter），
+  那些文件带 `SPDX-License-Identifier: GPL-2.0`。
+- **许可证只能分层**：内核部分（含我们加进内核树的文件）始终 GPL-2.0-only，
+  换不成 PARLZ.LICENSE（我们的权利只以 GPLv2 为条件取得，§6 还禁止附加限制，
+  上游著作权人也无法凑齐）；PARLZ.LICENSE 只覆盖内核之外的自有部分。
+
+三件事一起做完了：
+
+| 事 | 落点 |
+|---|---|
+| (a) 文本进盘 | 引导分区 `LICENSE.TXT` + `COPYING.TXT`(GPLv2 全文)；rootfs `/usr/share/licenses/<组件>/` 十一个目录 + `README` 索引 + `parlz/{PARLZ.LICENSE,LICENSE}`；根 `/LICENSE.TXT`（ISO 根与已安装根同源）；`/etc/parlz-release` 加 `license:` / `license-dir:` / `source-url:` |
+| (b) 分层说明 | 仓库根新增 `LICENSE`：内核 GPL-2.0-only / 自有部分 PARLZ.LICENSE 1.7 / 上游各自许可证的逐件表 + 源码义务说明；同步进 `README.md`、`web/license.html`、`web/i18n.js`（11 张语言表 ×3 个键全部改写，另 22 处 `<b>GPL-2.0-or-later</b>` 换成 PARLZ.LICENSE 1.7） |
+| (c) 条款校准 | `PARLZ.LICENSE` 新增 **1.1.1 范围排除**（内核树与上游件不在本许可证覆盖内）、**12.2.1 GPL-2.0-only**（内核侧修改不得重新授权 + §3 源码义务 + §6 不附加限制）、**12.3.1 不适用于 GPLv2-only**（原 12.3 只声明与 GPLv3 双向兼容）；中英文各一份 |
+
+实测出来的四个坑（都写进 AGENTS.md 了）：
+
+| 现象 | 根因 | 现在 |
+|---|---|---|
+| 交付盘上除 `/usr/share/licenses/bash` 外一个许可证文本都没有，而引导分区就放着改过的 `vmlinuz` | 分发目标代码却没随附许可证全文 = GPLv2 §3 硬违规，且**不会有任何报错** | `scripts/vendor-licenses.sh` 把 10 个组件的全文收进 `third_party/licenses/`；build-userland 整树拷进 rootfs（缺目录即失败）；gen-fatboot 放引导分区并挂载复核 |
+| 走 `build-2404.sh` 快速路重编后，盘里还是没有许可证 | 快速路只是把 `$U/root` **现有内容**重新 cpio，不执行 build-userland 里的 rootfs 定制，却照样打 `BUILD_2404_DONE` | 改 rootfs 布局一律走 `build-userland.sh` 全链（本轮就是这么发现并重跑的） |
+| 演示里 `bash/COPYING` 报 35149、盘上是 35147 | 手写进 `web/system.js` 的字节数会漂（bash 那份早先是手工存的 GPLv3 文本，与 Ubuntu 的那份差 2 字节） | `vendor-licenses.sh` 结尾**打印**出该写进 `LICENSES` 字面量的真值；`web-demo-test.js` 新增 13 条判据逐条比对（仓库 = 演示 = 尺寸） |
+| 判据里 `media.length(1130) === 1772` 假红 | 文本含中文，`String.length` 是 UTF-16 码元，盘上是 UTF-8 字节 | 一律 `Buffer.byteLength(...)` 与 `fs.statSync().size` 比 |
+
+验证（全部真跑）：`node scripts/web-demo-test.js` **285/285 ALL PASS**（新增"授权:"一批判据）；
+`sh scripts/iso-disk-e2e.sh` **PASS**；`bash scripts/refresh-shipped-disk.sh` **OK**；
+挂回交付快照的分区 2 复核：`/usr/share/licenses` 12 项、`/LICENSE.TXT` 1772 字节、
+`/etc/parlz-release` 里有 `source-url`；引导镜像 FAT16 里 `LICENSE.TXT` + `COPYING.TXT`
+在位且 `COPYING.TXT` 确为 GPLv2 全文。
+
+还抓出并补掉的两处"静默缺口"：
+
+- **`.gitignore` 是白名单，许可证文本一开始没被放行** —— `git status` 连 `??` 都不给，
+  于是"源码仓库里根本没有 LICENSE / PARLZ.LICENSE"这件事毫无征兆。现在加了
+  `!/LICENSE` 与 `!/PARLZ.LICENSE`，并有一条判据盯着这两行不许被删。
+- **演示站点对许可证只挂目录不挂字节**，`cat` 只会说"没有实体字节"。现在
+  `web-rootfs-sync.sh` 把 `/usr/share/licenses/**` 与 `/LICENSE.TXT` 一并同步
+  （站点 57.7 MiB），演示里 `cat /usr/share/licenses/linux-kernel/COPYING`
+  真读出 GPLv2 全文；判据同时要求这些文件确实在 `web/rootfs/` 里。
+
+## 2026-10-01 (19) gcc / clang 动态编译真的能用了 ✅
+
+用户要求"继续优化！支持 GCC/CLANG 动态编译"。查下来不是"少开了一个开关"，
+而是**工具链包里有名无实**：宿主自检是绿的，装进 guest 就是
+`gcc a.c` 编出来的东西一跑就 SEGV、`g++: not found`、`clang` 报
+`cannot find -lgcc_s`。根因集中在一处 —— 包里只收了运行时的 `.so.N` 与静态的
+`.a`，**没收集 `-lc` / `-lstdc++` / `-lgcc_s` 这些不带版本的 dev 名字**；
+而宿主自检永远看不见这类缺档，因为宿主自己什么都有。
+
+新验收：`scripts/toolchain-dyn-verify.sh` —— 把**真正交付的两个 .pm** 用 cpio
+解进空目录当 guest 根，`chroot` 进去以 `env -i`（显式没有
+`LD_LIBRARY_PATH`/`CPATH`/`LIBRARY_PATH`）裸敲 `gcc/g++/clang/clang++`，
+判据一律取**终态**：产物跑出来的字 + `readelf` 的 `DT_NEEDED`/`PT_INTERP`。
+改前 **13 PASS / 27 FAIL**，改后 **40 PASS / 0 FAIL**。
+
+| 现象(guest / 解包根里实测) | 根因 | 现在 |
+|---|---|---|
+| `gcc -o a a.c` 后 `./a` **SEGV(139)**，`dlopen` 那条还先打 `Using 'dlopen' in statically linked applications` | 包内没有 `libc.so` → ld 对 `-lc` **静默落回 `libc.a`**：静态 glibc 混着 `-pie` 的 `Scrt1.o` 与 `PT_INTERP` | `build-toolchain.sh` 新增 dev 层：`libc.so`/`libm.so`/`libstdc++.so`/`libgcc_s.so`/`libpthread.so`/`libdl.so`/`librt.so` + `libc_nonshared.a`，脚本内容一律**相对名** `GROUP ( libc.so.6 … )`（绝对路径只能对宿主或 guest 一边） |
+| `g++: not found` | ① 宿主根本没装 `g++` → 没有 `cc1plus`，所谓 C++ 支持不存在；`c++` 被 alternatives 指到 clang；② 包里 `/usr/bin/g++` 是一条指向**没被打进包**的文件的软链 | 宿主补 `g++ libstdc++-13-dev`；驱动拷贝扩到 `g++/cc/c++/cpp/gcc-ar/gcc-ranlib`；**装箱前的悬空链闸门**直接拒绝这种包出厂 |
+| `clang` 报 `cannot find -lgcc_s` | G15 只挑了 `crt*.o + libgcc*.a`；clang 包里那句 `cp -aL …/libgcc_s.so → lib/toolchain/libgcc_s.so.1` 把**链接器脚本**当成了 so.1，于是 `libgcc_s.so → so.1 → GROUP(libgcc_s.so.1)` 自引用 | G15 整目录收 + dev 名两份；那句 cp 删掉（真档案本来就在 `lib/` 里） |
+| `clang++` 报 `cannot find -lstdc++` 与 `cannot find /usr/lib/x86_64-linux-gnu/libm-2.39.a` | `libstdc++.so` 在宿主是**相对软链**(`../../../x86_64-linux-gnu/…`)，`cp -a` 进包树即悬空；版本化 `libm-<glibc>.a` 被写死成 `2.43`（旧 26.04 的 glibc），24.04 是 `2.39` | glibc 版本从宿主探测（`libm-*.a` 反推）；相对链在宿主解引用成真档案收进 `lib/`，包内改绝对单跳链 |
+| `-fPIC -shared` 出来的库链接时找不到 | 包只铺了 `/usr/lib/x86_64-linux-gnu` 一棵树 | 三棵：`/usr/lib/x86_64-linux-gnu`、`/lib/x86_64-linux-gnu`、`/lib` —— 正是 `ld.so` 在**没有 `ld.so.cache`** 时的默认搜索目录（这台上没有 ldconfig，`/etc/ld.so.conf.d` 是纯装饰） |
+| 打包当场挂：`…/13/libstdc++.so: No such file or directory` | 对悬空软链做 `>` 重定向 = `ENOENT`（内核跟着链去找目标目录） | 装箱前先"解引用收档案 + 重写成绝对单跳链/相对 GROUP"，解不出的一律 `rm`，不留悬空 |
+| `readelf` 不存在；补进去后又 `error while loading shared libraries: libctf-nobfd.so.0` | binutils 只链了 `as/ld/ar/ranlib/objdump/nm/strip`；而 ldd 依赖收集发生在**新增文件被拷进包之前** | 补 `readelf/objcopy/size/strings/cpp/gcov/gcc-ar/gcc-ranlib`；依赖收集改成**闭包迭代**（最多 3 轮）+ 自检硬断"包内每条 `DT_NEEDED` 都得在 `lib/` 里有档案" |
+| `Packages` 索引说 clang 是 `21.1.8`，装进去的是 18.1.3 | 索引那行把版本号焊死在脚本里 | 版本取宿主实际探测值；顺手剪掉非 x86_64 的 clang 运行时(`*-i386.so` 要 i386 的 `ld-linux.so.2`，纯占地方+报假红) |
+| 1.5 GB 包写完，WSL 实例被重启 → `gcc-13.pm` 546 MB 变 60 MB、`Packages` 变 0 字节，**而日志当时已经打过 "546M"** | 数据全在页缓存；且 `cpio -t` 对**被截断**的归档**仍返回 0**，只在 stderr 打 `premature end of file`（而 `cpio -t` 也从不打印 `TRAILER!!!`，旧代码那句 `grep -cv '^TRAILER'` 是空操作） | `pack_pm` 写完 `sync`；判据改成"stderr 认 `cpio:` 前缀 + 成员数与源树逐字相等"；解包侧同一套判据 |
+
+包体：`gcc-13.pm` 476 792 320 → **591 771 136** 字节(12 297 成员)，
+`clang-llvm-18.pm` 1 013 805 056 → **1 074 919 936** 字节(7 798 成员)。
+多出来的是 dev 名、`libm-2.39.a`/`libc_nonshared.a`、`cc1plus`+`g++`、
+补的 binutils 依赖与 sanitizer 真 soname；剪掉的 i386 运行时抵了一部分。
+
+### 真机(guest)那一半：判据从来没跑起来过
+
+宿主 chroot 绿了不等于**我们的内核**能跑动态产物 —— 于是去跑
+`scripts/pm-verify.sh`，结果它一条判据都没执行：
+
+| 现象 | 根因 | 现在 |
+|---|---|---|
+| QEMU 起来了、跑满超时，日志里只有 `init: /pmtest.sh present (run manually)` | 注入式自测钩子写在 `userland/init.c` 里，而正常启动早已是 **busybox-init + `parlz-boot-body.sh`**(rootfs 里根本没有 `/init`，内核回落 `/sbin/init`)。init.c 那份钩子是死代码，body 只会" announce "不执行 → `pm-verify.sh` / `toolchain-verify.sh` 从切 busybox-init 那天起就不可能通过 | body 里加 `run_hook`：`/tooltest.sh`(900s) 与 `/pmtest.sh`(1500s) 真跑，看门狗用 `kill -0` 轮询 + `/bin/busybox sleep`(不依赖被裁的 `timeout`)，跑完打 `finished (status N)` |
+| FAIL 打出来是 `编译 rc=1: ` —— 错误信息是空的 | 诊断用了 `head`/`tail`/`wc`，这三条**都被裁进 `core.pm`** 了，`$(head -2 f)` 得到空串 → 判据退化 | 诊断一律 `cat`；"非 0 字节"改用 `[ -s ]`。**判据不许依赖被裁的命令** |
+| `nano: command not found` 三条红 | nano 也在 `core.pm` 里(第三轮瘦身)，而 pmtest 的 terminfo 判据假定它在默认系统 | 先 `pm install core` 再测，顺带把"被裁的命令能装回来且真跑起来"也纳入判据；结束 `pm remove core` |
+| `cp src dir/` 那条共享库判据 rc=1 | guest 的 `cp`/`ln` 是自研实现，"拷进目录"的语义不作保证；把它们混进工具链判据，红了分不清是谁的问题 | 共享库直接 `-o /usr/lib/x86_64-linux-gnu/libpmfoo.so.1`，链接用 `-l:libpmfoo.so.1`，不借 cp/ln |
+| `output/feed/Packages` 里 gcc/clang 的版本列一直是 `unknown` | `build-pm-packages.sh` 先写 `$REPO/VERSIONS`，紧接着 `rm -rf "$REPO"` 重建仓库目录把它删了(feed 读不到就填 unknown)。注释里写着"注意 REPO 下面才 rm -rf" —— 说了等于没做 | `VERSIONS` 改到 `rm -rf` **之后**写 |
+
+**真机结果：`pm-verify.sh` 28/28 PASS(`PM_ALL_OK`)** —— 在 Parlz 内核里
+`pm install gcc` + `pm install clang` 之后，`env -i`(无
+`LD_LIBRARY_PATH`/`CPATH`/`LIBRARY_PATH`)
+下 `gcc`/`g++`/`clang`/`clang++` 裸命令动态编译都真跑出结果，产物
+`DT_NEEDED` 有 `libc.so.6`/`libstdc++.so.6`、`PT_INTERP` 是包内
+`/lib64/ld-linux-x86-64.so.2`；`-fPIC -shared` 出的库装进默认目录后能被链接、
+能被 `dlopen`；`-static` 那条路没退化；`pm remove` 干净。
+顺带一条与旧注释相反的事实：init.c 里写过"guest 内核加载 PIE 动态产物会
+SEGV，所以默认 `-no-pie`"，真机上默认 PIE 的产物跑得好好的 —— 那个前提
+已经不再成立(而且 gcc 根本不读 `CFLAGS` 环境变量，那三行 `setenv("CFLAGS",
+"-no-pie")` 从来没有作用)。
+
+同时把**判据本身**里糊过去的地方清掉：`scripts/pm-verify.sh` 注入 guest 的
+`pmtest.sh` 与 `userland/tooltest.sh.in` 里那些 `-l:libc.so.6`、
+`-Wl,-rpath`、`--gcc-toolchain=` 补丁全删（带着补丁测出来的"能编译"证明不了
+包自包含），目录改成探测 `gcc-*`/`llvm-*`，动态性判据从 `file`(我们的 `file`
+不打 `"dynamically linked"`，那个 case 恒判 FAIL) 换成 `readelf`。
+`init.c` 的 `pmtest` 看门狗 240 s → 1500 s(它是 busybox-init 缺位时的兜底
+PID1，值也该跟着包体积走)。
+
+验证（本轮全部真跑过）：
+
+```bash
+# 宿主侧：解真包 + chroot + env -i，40/40（改前 13 PASS / 27 FAIL），约 6 分钟
+wsl -d Ubuntu-24.04 -u root -e bash -c "bash /mnt/f/Linux/Parlz/scripts/toolchain-dyn-verify.sh"
+# 真机：QEMU guest 里 pm install gcc/clang 后裸命令动态编译，28/28 → PM_ALL_OK
+wsl -d Ubuntu-24.04 -u root -e bash -c "sh /mnt/f/Linux/Parlz/scripts/pm-verify.sh"
+# 交付介质与快照(改了 boot body 就必须重跑这三条)
+wsl -d Ubuntu-24.04 -u root -e bash -c "sh /mnt/f/Linux/Parlz/scripts/iso-disk-e2e.sh"          # PASS
+wsl -d Ubuntu-24.04 -u root -e bash -c "bash /mnt/f/Linux/Parlz/scripts/refresh-shipped-disk.sh" # OK
+wsl -d Ubuntu-24.04 -u root -e bash -c "cd /mnt/f/Linux/Parlz && node scripts/web-demo-test.js"  # 269/269
+```
+
+演示站的 gcc/clang 判据也一起改了：期望值改成**从 `gcc.list` 现算**
+(写死的 11773 / 5503 / 454.7 MiB 每次重打包都会失真，这一轮就是这么红的)，
+"清单缺失走流式扫描"那条命令补成 `pm install gcc --scan`（包涨到 564 MiB，
+越过了演示 `AUTO_SCAN` 的 512 MiB 上限），并新增"索引尺寸 = 盘上尺寸 =
+`system.js` 里 PACKAGES 的 version/size"三条对齐判据。
+
+## 2026-09-30 (18) 包管理器换成自研 dpkg / apt / rpm / yum 四件套 ✅
+
+用户要求"移除 OPKG，改成移植 APT/DPKG 和 YUM/RPM 这四个包管理器"。四个都是**自己写的
+静态二进制**，共用一份新库 `userland/pkgcore.c/h`（ar / ustar+GNU+pax tar / newc cpio
+的读、gzip 解压用 `miniz_tinfl`、安全落盘、Debian 与 RPM 两套版本比较、SHA-256）。
+上游 OPKG 与 `ppm`/`opkg` 委托层没删文件，改名留在 `userland/legacy-backup/` 与
+`scripts/legacy-backup/`（`build-opkg.sh` 也不再被 `build-userland.sh` 调用 ——
+以前它缺 stage 会硬中止整条构建）。
+
+| 件 | 包/索引格式 | 状态库 | 动作 |
+|---|---|---|---|
+| `dpkg` | `.deb` = ar(`debian-binary` + `control.tar[.gz]` + `data.tar[.gz]`) | `/var/lib/dpkg/status` + `info/<包>.{list,control,md5sums,conffiles,pre…}` | `-i -r -P -l -s -L -c -I --compare-versions --root/--admindir` |
+| `rpm` | `.rpm` = lead + 签名 header + 主 header + cpio 负载(gzip) | `/var/lib/rpm/installed/<NVRA>.{meta,list}` + `scriptlets/<NVRA>.{prein,postin,preun,postun}` | `-i -U -e -q -qa -qi -ql -qf -qp -qpi -qpl --compare-versions --root/--dbpath` |
+| `apt` | Debian `Packages[.gz]`（`dists/<发行>/<组件>/binary-<架构>/`） | 复用 dpkg 的 status | `update install remove purge search show list policy clean` |
+| `yum` | `repomd.xml` → `primary.xml(.gz)` | 复用 rpm 的库 | `makecache install update remove list info search repolist clean` |
+
+三条设计决定（都是"说清楚不冒充"而不是"糊过去"）：
+
+- **不验 GPG 签名**。替代闸门：apt 要 `[trusted=yes]`（或 `--allow-unauthenticated`）、
+  yum 要 `gpgcheck=0`（或 `--nogpgcheck`），否则拒绝安装；下载一律按索引声明的
+  `Size` + `SHA256` 核对，不符就删缓存、绝不交给底层解包。`--skip-broken` 的语义是
+  **丢掉这个请求**，不是"没依赖也照装"。
+- **apt/yum 默认没有任何源**：官网 `www.parlz.com/feed` 是 `.pm` 格式，不是 deb/rpm
+  仓库，指过去只会"取不到索引"。`/etc/apt/sources.list` 与 `/etc/yum.repos.d/README`
+  里只放注释示例。`pm` 的默认源仍是官网，没动。
+- 卸载脚本要在**没有包文件**的时候也能跑 → rpm 装时把四段脚本落进
+  `<db>/scriptlets/`，解释器路径写进 `.meta`，`-e` 才找得回来（早期版本这里
+  留了句"卸载时不需要包体"的注释加一段空操作，属于半成品，已改成真的）。
+
+实现期实测出来的红→绿（每一条都有对应判据）：
+
+| 现象 | 根因 |
+|---|---|
+| 装出来的脚本 0644、内容却对 | `pc_tar_walk` 算出 `mode` 后**忘了赋给 `m.mode`** |
+| 软链成员变成一个空目录 | 抽软链时对 `path` 自己 `mkdir` → 目录占了名字，`symlink` 必 `EEXIST`（设备节点同错） |
+| `rpm -qpl` 打出 `usr/...`（缺斜杠）而安装没事 | cpio 名 `./usr/x` 的 `memmove(name, name+2)` 把前导 `/` 留下了 |
+| `rpm: 文件里没有负载`/`负载标称 gzip 但没有 gzip 魔数` | 段头 16 字节里 `reserved(4)` 被当成条目数（真条目数在 +8）；负载**紧跟主 header 值区末尾不补齐**，多补一次 8 字节对齐就把 gzip 头切掉了 |
+| 文件清单只捞到一个名字 | header type `8`(串数组) 的 `count` 是**字节数**不是串数 |
+| `dpkg -l` 没有 `ii`、`-r` 说没装过、一个文件都不删 | `strtok("\n\n")` 的字符集里两个 `\n` 并成一个 → 状态库被按**行**切开，`raw` 只剩 `Package:` 一行（apt/yum 读索引同病） |
+| 刚装完就 `apt remove` 说"没装过" | `fld()` 已吃掉冒号后的空格，再找 `" install ok installed"`（带前导空格）永远匹配不上 |
+| `apt` 打成 `获取 /pool/x.deb` 且"来自未标 trusted=yes 的源 (空)" | 改成按缓存目录枚举索引后**没人读 sources.list** 了，`srcs[]` 全零 |
+| 摘要闸门形同虚设 | 自己写的 SHA-256 里 `K[3]` 抄成 `0xe9b5c5a5`（应为 `0xe9b5dba5`）—— `scripts/sha256-consts-check.py` 从素数立方根现算 K/IV 才抓住它 |
+| 装盘复核报 `FAIL -> /var` | `/var` 以前是**合并 opkg stage 时顺带进 rootfs** 的；移除 opkg 后整个 `/var` 从默认根里消失了，而 `check-installed-root.sh` 要求已安装根有 `/var`（四个管理器的状态库也住在那）。现在 `build-userland.sh` 显式建 `var/lib/{dpkg,rpm,apt}`、`var/cache/{apt,yum}`、`var/log`、`var/tmp` |
+| 测试自己假绿 | `x86_64` 宿主上 `rpmbuild --target i686` 直接拒绝，"架构不符"的包改成用 `scripts/rpmsetarch.py` 等长替换真包的 ARCH（上游 `rpm` 会报 header 摘要不符 —— 正好当反向证据） |
+
+验收（判据的对照物全是上游工具，不是"自己造包自己认"）：
+
+```
+scripts/dpkg-verify.sh  64 条  真 .deb 由宿主 dpkg-deb 造；长名/软链/权限/清单/状态/卸载 +
+                         三类必须拒绝（xz 负载、别的架构、%pre 失败）+ 恶意 ../../ 成员
+scripts/rpm-verify.sh   80 条  真 .rpm 由 rpmbuild 造，-qpl/-qlp 与宿主 rpm 逐行 cmp，
+                         .meta 行数 = 上游 -qlp 文件数，两版本并存的归属保护与脚本参数
+scripts/apt-verify.sh   58 条  仓库索引由 apt-ftparchive 生成 + python3 http 站点；
+                         SHA-256 已知向量与 sha256sum 逐字节比 13 种长度；依赖闭包、
+                         或关系、不可满足、篡改包(等长/加长两关)、信任闸门、反向依赖
+scripts/yum-verify.sh   67 条  repodata 由 createrepo_c 生成；虚拟 Provides 与文件型依赖、
+                         repomd 摘要不符、enabled/gpgcheck 各种组合
+scripts/pkg-guest-e2e.sh 11 条 真 QEMU guest 里 apt/yum 联网 makecache→install→跑起来的
+                         程序→remove，包内 %post 也在客内真跑过
+```
+
+体积影响：initramfs 24.7 MB、`parlz-bzImage`/盘内 vmlinuz 39.3 MB（64 MiB 的 FAT16
+引导分区仍放得下，但余量变小）；`apt`/`yum` 各 7.6 MB 是因为静态链了 OpenSSL（https 源），
+`dpkg`/`rpm` 各约 0.9 MB。`pm-trim.list` 里的 `dpkg`/`rpm` 两个历史名字会撞上新的真
+二进制，已在 `build-userland.sh` 的 `KEEP` 里保住（否则 `apt`/`yum` 找不到后端）。
+
+已知差别（不假装支持）：只解 gzip 与不压缩容器（`.xz`/`.zst` 明确报错）；不处理
+`Conflicts`/`Breaks`/`Recommends`、没有事务回滚、apt 不拆 `sources.list.d`、
+`rpm -e` 不查反向依赖（状态库里没记 requires）、不验任何签名。
+
 ## 2026-09-28 (17) PM 的默认镜像钉死在官网 www.parlz.com/feed ✅
 
 用户要求"以后 PM 的默认镜像都是 www.parlz.com/feed/*.pm"。查下来**默认值分散在三处**，

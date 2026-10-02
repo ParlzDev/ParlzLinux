@@ -42,19 +42,22 @@ CLANG_FULL=$("$TC/opt/llvm-$LV/bin/clang" --version 2>/dev/null \
              | sed -n 's/.*version \([0-9.]*\).*/\1/p' | head -1)
 if [ -z "$CLANG_FULL" ]; then CLANG_FULL="$LV"; fi
 echo "打包目标: gcc $GCC_FULL -> gcc-$GV.pm, clang $CLANG_FULL -> clang-llvm-$LV.pm"
-# 把实际版本留给 feed 用(包名里只有大版本号 13/18, 索引想写 13.3.0 得靠这个)。
-# 注意 REPO 下面才 rm -rf, 这里先建目录再写。
-mkdir -p "$REPO"
-cat > "$REPO/VERSIONS" <<EOF
-gcc=$GCC_FULL
-clang=$CLANG_FULL
-EOF
 
 [ -d "$TC/opt/gcc-$GV" ] && [ -d "$TC/opt/llvm-$LV" ] || {
   echo "缺 $TC(先跑 scripts/build-toolchain.sh)"; exit 1; }
 
 rm -rf "$REPO"
 mkdir -p "$REPO"
+# 把实际版本留给 feed 用(包名里只有大版本号 13/18, feed 的索引想写 13.3.0
+# 就得靠这份)。★ 必须写在 rm -rf "$REPO" **之后** —— 以前写在前面, 下面那句
+# 重建仓库目录顺手把它删了, 于是 output/feed/Packages 里 gcc/clang 的版本列
+# 一直是 "unknown"(feed 读不到 VERSIONS 就填这个), guest `pm available` 也跟着
+# 显示 unknown。注释当时还写着"注意 REPO 下面才 rm -rf, 这里先建目录再写" ——
+# 说了等于没做。
+cat > "$REPO/VERSIONS" <<EOF
+gcc=$GCC_FULL
+clang=$CLANG_FULL
+EOF
 
 # 打一个 pm 包: $1=包目录(含 opt/lib/usr/... 子树, 相对根布局)
 # 产出成员名带 / 前缀(把根目录名替换成 /)。
@@ -65,13 +68,45 @@ pack_pm() {
   # 实际方案: 把包内容树按 "opt/ lib/ usr/ bin/ ..." 相对布局打包,
   # cpio 成员名 = 相对名(如 opt/toolchain/...)。pm.c 安装时给相对名补 / 前缀,
   # 落根文件系统。相对名避免了 cpio 读宿主真实 /lib /usr 的歧义。
+  local srcn cerr err n
+  srcn=$( cd "$root" && find . -mindepth 1 | wc -l )
+  cerr=$(mktemp)
+  # ★ cpio -o 的 stderr 以前是 `2>/dev/null` 直接丢掉的 —— "Cannot stat"/
+  #   "Premature end" 这类真报错也跟着被吞, 包少档案也不报。改成收下来判
+  #   (`cpio:` 前缀才算错, 成功时那句 "N blocks" 也在 stderr 上)。
   ( cd "$root" && find . -mindepth 1 -print | sed 's|^\./||' | LC_ALL=C sort \
-      | cpio -o -H newc 2>/dev/null ) > "$out"
-  # 校验成员数非 0
-  local n
-  n=$(cpio -t < "$out" 2>/dev/null | grep -cv '^TRAILER' || true)
+      | cpio -o -H newc ) > "$out" 2>"$cerr"
+  if grep -q 'cpio:' "$cerr"; then
+    echo "  !! 打包报错: $(grep -m1 'cpio:' "$cerr")"
+    rm -f "$cerr"; return 1
+  fi
+  rm -f "$cerr"
+  # ★ 写完必须 sync 再复核: 1.5 GB 一次写下去, 数据全在页缓存里。实测踩过
+  #   WSL 实例在打包结束后被重启, pm-repo 里 gcc-13.pm 只剩 60 MiB、
+  #   Packages 变 0 字节 —— 而脚本当时已经打印过"546M", 完全看不出被截断。
+  sync
+  # 校验一: cpio 的**判据只能看 stderr + 成员数**。被截断的归档 cpio -t 仍然
+  # 返回 0, 只在 stderr 打 "premature end of file"(实测), 光看退出码会被骗。
+  # 校验二: 成员数与源树一致(丢档案/半途而废都出得来)。
+  # ★ 注意 GNU cpio -t **不打印 TRAILER!!! 这一条**(以前那句
+  #   `grep -cv '^TRAILER'` 因此是个空操作), 而它在**成功**时会往 stderr 打
+  #   "N blocks" —— 所以 stderr 判错只能认 `cpio:` 前缀, 认"非空"会把好包判死。
+  local err n
+  err=$(mktemp)
+  cpio -t < "$out" >"$err.list" 2>"$err"
+  if grep -q 'cpio:' "$err"; then
+    echo "  !! $out 归档不完整: $(grep -m1 'cpio:' "$err")"
+    rm -f "$err" "$err.list"; return 1
+  fi
+  n=$(wc -l < "$err.list")
+  rm -f "$err" "$err.list"
   [ "$n" -gt 0 ] || { echo "  !! $out 打空了"; return 1; }
-  echo "    $(basename $out): 成员 $n, $(du -h "$out" | cut -f1)"
+  if [ "$n" != "$srcn" ]; then
+    echo "  !! $out 成员数与源树不符(源 $srcn, 包 $n)—— cpio 被截断或有档案没进包"
+    return 1
+  fi
+  echo "    $(basename "$out"): 成员 $n, $(du -h "$out" | cut -f1)"
+  stat -c '    字节 %s' "$out"
 }
 
 # 生成 manifest(包名/版本/依赖/摘要)
@@ -84,6 +119,40 @@ depends: $3
 arch: x86_64-linux-gnu
 summary: $4
 EOF
+}
+
+# ---- 悬空软链闸门 ----
+# 包里的软链目标是 **guest 路径**(/lib/toolchain/... /opt/toolchain/...),
+# 所以在宿主上 `test -e` 一律"存在"(宿主的 /lib/toolchain 是另一个东西),
+# 测不出断链。这里按 guest 视角解析: 把目标拼到包根下再判存在。
+# 为什么值得挡: g++ 那条链就是目标文件不存在却照样打进了包, 装到 guest 里
+# 表现为 "g++: not found"(实测), 现场看像"包没装上"。
+no_dangle() { # $1=包根 $2..=要检查的相对目录
+  local root="$1"; shift
+  python3 - "$root" "$@" <<'PY'
+import os, sys
+root = sys.argv[1]
+subdirs = sys.argv[2:]
+bad = []
+for sd in subdirs:
+    base = os.path.join(root, sd)
+    if not os.path.isdir(base):
+        continue
+    for dp, dn, fn in os.walk(base):
+        for n in fn + dn:
+            p = os.path.join(dp, n)
+            if not os.path.islink(p):
+                continue
+            t = os.readlink(p)
+            q = t if os.path.isabs(t) else os.path.normpath(os.path.join(dp[len(root):], t))
+            if not os.path.exists(os.path.join(root, q.lstrip('/'))):
+                bad.append(p[len(root):] + " -> " + t)
+if bad:
+    print("  !! 包内悬空软链(guest 里就是 not found):")
+    for b in sorted(bad)[:25]:
+        print("     ", b)
+    sys.exit(1)
+PY
 }
 
 # ---- gcc 包 ----
@@ -106,19 +175,32 @@ ln -sfn /opt/toolchain/gcc-$GV/bin/c++   "$G/usr/bin/c++"
 # /bin 单跳指包内(与 build-userland 约定一致)
 ln -sfn /opt/toolchain/gcc-$GV/bin/gcc   "$G/bin/gcc"
 ln -sfn /opt/toolchain/gcc-$GV/bin/g++   "$G/bin/g++"
-# binutils(as/ld/ar/ranlib/objdump/nm/strip): gcc 驱动按 /usr/bin/
-# x86_64-linux-gnu-as 等找 binutils, guest 的 /usr/bin 下原本没有。
-# 补单跳软链指包内 binutils, 裸 gcc ./a.c 不用 -B 就能命中 as/ld。
+# binutils + 预处理器: gcc/clang 驱动按 /usr/bin/x86_64-linux-gnu-as 等找,
+# guest 的 /usr/bin 下原本没有; 用户也要 readelf/objcopy 才敢说自己会动态编译
+# (以前只链 as/ld/ar/ranlib/objdump/nm/strip, readelf 直接 not found)。
 G15B="$G/opt/toolchain/gcc-$GV/bin"
-for bu in as ld ar ranlib objdump nm strip; do
+for bu in as ld ld.bfd ar ranlib objdump nm strip readelf objcopy size strings cpp gcov gcc-ar gcc-ranlib; do
   [ -f "$G15B/x86_64-linux-gnu-$bu" ] && \
     ln -sfn "/opt/toolchain/gcc-$GV/bin/x86_64-linux-gnu-$bu" "$G/usr/bin/x86_64-linux-gnu-$bu"
-  [ -f "$G15B/$bu" ] && \
-    ln -sfn "/opt/toolchain/gcc-$GV/bin/$bu" "$G/usr/bin/$bu"
+  [ -f "$G15B/$bu" ] && ln -sfn "/opt/toolchain/gcc-$GV/bin/$bu" "$G/usr/bin/$bu"
 done
-# 系统多架构路径软链树(驱动硬编码 /usr/lib/x86_64-linux-gnu/... 命中)
-mkdir -p "$G/usr/lib/x86_64-linux-gnu"
-for f in "$TC/lib/"*; do ln -sfn "/lib/toolchain/$(basename $f)" "$G/usr/lib/x86_64-linux-gnu/$(basename $f)" 2>/dev/null; done
+# 系统多架构路径软链树(驱动与链接器脚本硬编码这两个目录的绝对路径;
+# ld.so 无 /etc/ld.so.cache 时的默认搜索目录也是它们 —— 动态产物**不设
+# LD_LIBRARY_PATH** 能不能起来就看这里)
+mk_mtrees() { # $1=包根
+  mkdir -p "$1/usr/lib/x86_64-linux-gnu" "$1/lib/x86_64-linux-gnu" "$1/lib"
+  for f in "$TC/lib/"*; do
+    b=$(basename "$f")
+    # 目录不收: $TC/lib/gcc/... 是包内私树的入口, 链成 /usr/lib/gcc 会让
+    # 后面 `mkdir -p usr/lib/gcc/x86_64-linux-gnu` 顺着软链把假目录写进
+    # lib/toolchain/gcc/ 里(实测会污染包内树)。
+    [ -d "$f" ] && continue
+    ln -sfn "/lib/toolchain/$b" "$1/usr/lib/x86_64-linux-gnu/$b" 2>/dev/null
+    ln -sfn "/lib/toolchain/$b" "$1/lib/x86_64-linux-gnu/$b"   2>/dev/null
+    ln -sfn "/lib/toolchain/$b" "$1/lib/$b"                    2>/dev/null
+  done
+}
+mk_mtrees "$G"
 # gcc 私目录(驱动硬编码 /usr/lib/gcc/x86_64-linux-gnu/$GV -> 包内 G15):
 # 裸 g++/gcc 动态链接时找 libgcc_s.so, 包内补软链指回 /opt/toolchain/gcc-$GV。
 mkdir -p "$G/usr/lib/gcc/x86_64-linux-gnu"
@@ -139,6 +221,10 @@ if [ -d /usr/include ]; then
 fi
 # manifest + 包名(供 pm 识别)
 gen_manifest gcc $GCC_FULL "" "GCC 预编译工具链(x86_64, 含 glibc + binutils + 系统头)" > "$G/pm.pkg"
+no_dangle "$G" usr/bin bin lib lib64 usr/lib/x86_64-linux-gnu usr/lib/gcc \
+                 opt/toolchain/gcc-$GV/usr/lib/x86_64-linux-gnu \
+                 opt/toolchain/gcc-$GV/usr/lib/gcc \
+                 opt/toolchain/gcc-$GV/lib/gcc
 
 pack_pm "$G" "$REPO/gcc-$GV.pm"
 echo "    gcc-$GV.pm: $(du -h $REPO/gcc-$GV.pm | cut -f1)"
@@ -154,29 +240,17 @@ cp -a "$TC/opt/llvm-$LV" "$L/opt/toolchain/llvm-$LV"
 mkdir -p "$L/lib/toolchain"
 cp -a "$TC/lib/." "$L/lib/toolchain/" 2>/dev/null || true
 [ -f "$TC/lib64/ld-linux-x86-64.so.2" ] && mkdir -p "$L/lib64" && cp -a "$TC/lib64/ld-linux-x86-64.so.2" "$L/lib64/"
-# clang -l:libc.so.6 会走 gcc 驱动注入的 -lgcc_s(收集器硬编码)。
-# 单独装 clang(未装 gcc 包)时宿主 gcc-$GV 无 libgcc_s.so, 从宿主
-# /usr/lib/x86_64-linux-gnu 拷真实档案进 /lib/toolchain, 链接可命中。
-cp -aL /usr/lib/x86_64-linux-gnu/libgcc_s.so "$L/lib/toolchain/libgcc_s.so.1" 2>/dev/null || true
-ln -sfn /lib/toolchain/libgcc_s.so.1 "$L/lib/toolchain/libgcc_s.so" 2>/dev/null || true
-# -lgcc 静态档案(收集器注入, 裸 clang 链接 C/C++ 时 ld 找 -lgcc):
-# 宿主 gcc-$GV 私目录 lib/gcc/x86_64-linux-gnu/$GV/libgcc.a 拷进 clang 包
-# /usr/lib(与 g++/clang 驱动默认搜索路径一致), 裸 clang 链接可命中。
-mkdir -p "$L/usr/lib"
-for glib in libgcc.a libgcc_eh.a; do
-  [ -f "/usr/lib/gcc/x86_64-linux-gnu/$GV/$glib" ] && \
-    cp -aL "/usr/lib/gcc/x86_64-linux-gnu/$GV/$glib" "$L/usr/lib/$glib" 2>/dev/null || true
-done
-# clang 多架构路径软链树(与 gcc 包同款, 让 clang 驱动硬编码
-# /usr/lib/x86_64-linux-gnu 命中 glibc 共享库)
-mkdir -p "$L/usr/lib/x86_64-linux-gnu"
-for f in "$TC/lib/"*; do ln -sfn "/lib/toolchain/$(basename $f)" "$L/usr/lib/x86_64-linux-gnu/$(basename $f)" 2>/dev/null; done
-# 版本化静态档案(C/C++ 链接需要, 宿主 /usr/lib 才有):
-for mlib in libm-2.43.a libmvec.a; do
-  [ -f "/usr/lib/x86_64-linux-gnu/$mlib" ] && \
-    cp -aL "/usr/lib/x86_64-linux-gnu/$mlib" "$L/usr/lib/x86_64-linux-gnu/$mlib" 2>/dev/null || true
-done
-# gcc 私目录软链(clang 包独立装时供 C++ 链接 libgcc):
+# 多架构软链树 + /lib(与 gcc 包同款): 驱动与 glibc 链接脚本硬编码的绝对路径,
+# 以及 ld.so 无 cache 时的默认搜索目录, 都靠这里命中。
+# ★ 以前这里另有一句 `cp -aL /usr/lib/x86_64-linux-gnu/libgcc_s.so
+#   $L/lib/toolchain/libgcc_s.so.1` —— 把**链接器脚本**(内容是
+#   GROUP ( libgcc_s.so.1 -lgcc ))当成 so.1 收了进来, 于是
+#   libgcc_s.so -> libgcc_s.so.1 -> GROUP(libgcc_s.so.1) 自引用。
+#   $TC/lib 里已经有真档案 libgcc_s.so.1 与脚本 libgcc_s.so, 不再单独处理。
+mk_mtrees "$L"
+# gcc 私目录软链(clang 驱动按 /usr/lib/gcc/x86_64-linux-gnu/$GV 找
+# libgcc.a/libstdc++.so/crtbeginS.o): 指 gcc 包的落点, 单装 clang 时悬空,
+# 由下面的 dangle 闸门报出来(manifest 里 clang 依赖 gcc 就是为这个)。
 mkdir -p "$L/usr/lib/gcc/x86_64-linux-gnu"
 ln -sf "/opt/toolchain/gcc-$GV/lib/gcc/x86_64-linux-gnu/$GV" \
   "$L/usr/lib/gcc/x86_64-linux-gnu/$GV" 2>/dev/null || true
@@ -187,9 +261,16 @@ ln -sfn /opt/toolchain/llvm-$LV/bin/llvm-config "$L/usr/bin/llvm-config"
 ln -sfn /opt/toolchain/llvm-$LV/bin/clang      "$L/bin/clang"
 ln -sfn /opt/toolchain/llvm-$LV/bin/clang++   "$L/bin/clang++"
 ln -sfn /opt/toolchain/llvm-$LV/bin/llvm-config "$L/bin/llvm-config"
-# clang 编译 C/C++ 也要系统头 + libgcc: 宿主 /usr/include 整树拷进 clang 包
-# $L/usr/include, 解包后 clang 默认 -I/usr/include 命中; 同时 /usr/lib
-# 放 gcc 私目录软链(指 gcc 包), 动态链接 -lgcc_s/-lgcc 可命中。
+# clang 也要 binutils(as/ld)与 readelf: 它自己不带 ld, 驱动按
+# /usr/bin/x86_64-linux-gnu-as 等找。包内 llvm-$LV/bin 里有这些(收集器拷过),
+# 补单跳软链, 单装 clang 也能编。
+LB="$L/opt/toolchain/llvm-$LV/bin"
+for bu in as ld ld.bfd ar ranlib objdump nm strip readelf objcopy size strings; do
+  [ -f "$LB/$bu" ] && ln -sfn "/opt/toolchain/llvm-$LV/bin/$bu" "$L/usr/bin/$bu"
+  [ -f "$LB/x86_64-linux-gnu-$bu" ] && \
+    ln -sfn "/opt/toolchain/llvm-$LV/bin/x86_64-linux-gnu-$bu" "$L/usr/bin/x86_64-linux-gnu-$bu"
+done
+# 系统头: 宿主 /usr/include 整树(cp -aL 解引用, 包里是真档案)
 echo "    宿主 /usr/include 系统头补充(clang 包):"
 mkdir -p "$L/usr"
 if [ -d /usr/include ]; then
@@ -198,19 +279,16 @@ if [ -d /usr/include ]; then
       echo "    WARNING: 宿主 /usr/include 拷贝失败, clang 包无系统头"; }
   echo "      已补充: $(find "$L/usr/include" 2>/dev/null | wc -l) 个文件/目录"
 fi
-# gcc 私目录软链(clang 驱动硬编码 /usr/lib/gcc/x86_64-linux-gnu/$GV 找 libgcc.a)
-mkdir -p "$L/usr/lib/gcc/x86_64-linux-gnu"
-ln -sf "/opt/toolchain/gcc-$GV/lib/gcc/x86_64-linux-gnu/$GV" \
-  "$L/usr/lib/gcc/x86_64-linux-gnu/$GV" 2>/dev/null || true
-# 多架构路径软链树(驱动硬编码 /usr/lib/x86_64-linux-gnu 命中 glibc 共享库)
-mkdir -p "$L/usr/lib/x86_64-linux-gnu"
-for f in "$TC/lib/"*; do ln -sfn "/lib/toolchain/$(basename $f)" "$L/usr/lib/x86_64-linux-gnu/$(basename $f)" 2>/dev/null; done
 # clang 找 binutils: gcc 包已把 as/ld 软链到 /usr/bin, clang 驱动默认搜
-# /usr/bin/x86_64-linux-gnu-as 等; 单独装 clang(未装 gcc 包)时宿主
-# /usr/bin 若有系统 binutils 兜底, 无则提示装 gcc 包。
-# 动态编译: clang 默认动态, 产物 NEEDED libstdc++.so.6/libc.so.6,
-# 解释器 /lib64/ld-linux(包内), 运行时靠 LD_LIBRARY_PATH 命中 /lib/toolchain。
+# /usr/bin/x86_64-linux-gnu-as 等; 上面本包也补了一份, 不再依赖 gcc 包在装。
+# 动态编译: clang 默认动态, 产物 NEEDED libc.so.6/libstdc++.so.6,
+# 解释器 /lib64/ld-linux-x86-64.so.2(包内), 运行时由 /usr/lib/x86_64-linux-gnu
+# 与 /lib/x86_64-linux-gnu 两棵软链树命中 —— **不需要 LD_LIBRARY_PATH**。
 gen_manifest clang $CLANG_FULL gcc "Clang/LLVM 预编译工具链(x86_64, 含系统头 + 动态编译)" > "$L/pm.pkg"
+# 不查 usr/lib/gcc*: 那一支按设计指向 **gcc 包**的落点(manifest 里
+# depends: gcc 就是这件事的声明), 单独看 clang 包必然"悬空"。
+no_dangle "$L" usr/bin bin lib lib64 usr/lib/x86_64-linux-gnu \
+                 opt/toolchain/llvm-$LV/usr/lib/x86_64-linux-gnu
 
 pack_pm "$L" "$REPO/clang-llvm-$LV.pm"
 echo "    clang-llvm-$LV.pm: $(du -h $REPO/clang-llvm-$LV.pm | cut -f1)"
@@ -223,11 +301,14 @@ echo "    clang-llvm-$LV.pm: $(du -h $REPO/clang-llvm-$LV.pm | cut -f1)"
     sz=$(stat -c%s "$REPO/$p.pm")
     case $p in
       gcc-*) nm=gcc; ver=$GCC_FULL;;
-      clang-*) nm=clang; ver=21.1.8;;
+      # 版本列取实际探测值: 以前这里写死 21.1.8(旧 26.04 实例的 clang),
+      # 于是索引说 21.1.8 而装进去的是 18 —— pm list/--version 与索引对不上。
+      clang-*) nm=clang; ver=$CLANG_FULL;;
     esac
     printf '%s %s %s.pm %s\n' "$nm" "$ver" "$p" "$sz"
   done
 } > "$REPO/Packages"
+sync                     # 大档案写完就落盘(见 pack_pm 里那条 WSL 重启丢缓存的教训)
 cat "$REPO/Packages"
 
 echo "=== pm 包仓库就绪: $REPO ==="

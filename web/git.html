@@ -48,7 +48,7 @@
     <p class="lede" data-reveal style="--d:.3s" data-i18n="git.lede">自己托管的源码仓库，不挂第三方平台。</p>
   </div>
 
-  <section data-reveal>
+  <section data-reveal style="--d:.05s">
     <h2 data-i18n="git.repo.h2">仓库</h2>
     <table>
       <thead>
@@ -69,6 +69,16 @@
       </tbody>
     </table>
     <p class="hint" data-i18n-html="git.status"><b>只读镜像</b>：谁都能 clone/fetch，推送只走服务器本机或 SSH。两个地址指向同一份裸库 —— <code>git.os.parlz.com</code> 子域与服务端 <code>/git/</code> 那条 location 真正上线之前，clone 是连不上的；这里列的是待上线的地址，不是坏链接找借口。</p>
+  </section>
+
+  <section data-reveal style="--d:.1s">
+    <!-- 仓库浏览器（git.js）：about summary refs log tree commit diff stats + 逐目录 / 逐文件预览。
+         数据由 scripts/web-git-export.sh 从 git/parlz.git 导到 web/git/。里面先烘一行实话：
+         导出没跑（或 JS 没起来）时不是空白，而是告诉你怎么生成。 -->
+    <div id="cgit" class="cgit">
+      <p class="state" data-i18n="git.ui.nodata">读不到导出数据（git/manifest.js）。</p>
+      <p class="hint" data-i18n="git.ui.howto">跑一次 sh scripts/web-git-export.sh 生成；没有它，这一页照样列出下面的克隆地址与说明。</p>
+    </div>
   </section>
 
   <section data-reveal style="--d:.1s">
@@ -110,6 +120,7 @@ $ git update-server-info              <span class="c"># 服务器上刷新仓库
 <script src="i18n.js"></script>
 <script src="settings.js"></script>
 <script src="app.js"></script>
+<script src="git.js"></script>
 <script src="router.js"></script>
 </body>
 </html>

@@ -25,7 +25,8 @@ copy() {
 }
 for f in "$ROOT"/bin/* "$ROOT"/sbin/* "$ROOT"/usr/bin/* "$ROOT"/usr/sbin/* \
          "$ROOT"/usr/local/bin/* "$ROOT"/init "$ROOT"/install.d "$ROOT"/nettest.sh \
-         "$ROOT"/parlz/banner; do
+         "$ROOT"/parlz/banner "$ROOT"/LICENSE.TXT \
+         "$ROOT"/usr/share/licenses/README "$ROOT"/usr/share/licenses/*/*; do
   [ -e "$f" ] || continue
   rel=${f#"$ROOT"/}
   copy "$f" "$rel"

@@ -23,7 +23,7 @@ fi
 if [ -f /mnt/f/Linux/Parlz/.config-backup ]; then
   cp -f /mnt/f/Linux/Parlz/.config-backup $H/parlz-kernel/.config
 fi
-echo "=== [2] 重建 userland(opkg/curl/wget/gcc/clang 二进制, 需 CMake) ==="
+echo "=== [2] 重建 userland(dpkg/rpm/apt/yum/curl/wget/gcc/clang 二进制, 需 CMake) ==="
 echo "  (跳过: userland 二进制已打进 rootfs.cpio.gz, 直接从 60M cpio 解包即可)"
 echo "=== [3] 解包最新 rootfs.cpio.gz(已含 busybox/login/sh/bash 全部) ==="
 mkdir -p $H/parlz-userland/root

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>licenses — parlz</title>
-<meta name="description" content="ParlzOS 的许可证与引用：自有代码 GPL-2.0-or-later，内核沿用 Linux，其余上游组件逐项列出许可与出处。">
+<meta name="description" content="ParlzOS 的许可证与引用：内核（含加进内核树的自有文件）为 GPL-2.0-only，Parlz 自有的用户空间/脚本/文档适用 PARLZ.LICENSE 1.7，其余上游组件逐项列出许可与出处。">
 <meta name="color-scheme" content="dark light">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23000'/><rect x='3' y='4' width='2' height='8' fill='%2300e08a'/></svg>">
 <script src="boot.js"></script>
@@ -45,8 +45,8 @@
 
   <div class="hero">
     <h1 id="word">licenses<span class="cursor" aria-hidden="true"></span></h1>
-    <p class="lede" data-reveal style="--d:.3s" data-i18n-html="license.lede">ParlzOS 自己写的那部分（<code>userland/</code>、<code>scripts/</code>、标识层）
-      以 <b>GPL-2.0-or-later</b> 发布；其余都是上游组件，各自的许可与出处列在下面。</p>
+    <p class="lede" data-reveal style="--d:.3s" data-i18n-html="license.lede">ParlzOS 自己写的那部分（<code>userland/</code>、<code>scripts/</code>、<code>web/</code>、文档）
+      以 <b>PARLZ.LICENSE 1.7</b> 发布；<b>内核部分（含加进 <code>linux-7.2.5/</code> 的文件）始终是 GPL-2.0-only</b>，不能被重新授权；其余都是上游组件，各自的许可与出处列在下面。</p>
   </div>
 
   <section data-reveal>
@@ -97,9 +97,9 @@
           <td class="cmd"><a class="u" href="https://github.com/besser82/libxcrypt" target="_blank" rel="noopener">github.com/besser82/libxcrypt ↗</a></td>
         </tr>
         <tr>
-          <td class="name">opkg</td><td class="ver">0.8.0</td>
-          <td class="size">GPL-2.0</td>
-          <td class="cmd"><a class="u" href="https://git.yoctoproject.org/opkg/" target="_blank" rel="noopener">yoctoproject.org/opkg ↗</a></td>
+          <td class="name">miniz（tinfl 单文件解压器）</td><td class="ver">3.02 的子集</td>
+          <td class="size">Miniz license（MIT 风格）</td>
+          <td class="cmd"><a class="u" href="https://github.com/richgel999/miniz" target="_blank" rel="noopener">github.com/richgel999/miniz ↗</a></td>
         </tr>
         <tr>
           <td class="name">SYSLINUX / ISOLINUX</td><td class="ver">6.04</td>
@@ -126,16 +126,24 @@
     <h2 data-i18n="license.own.h2">Parlz 自有部分</h2>
     <dl>
       <dt data-i18n="license.own.lic">许可</dt>
-      <dd data-i18n-html="license.own.licval">GPL-2.0-or-later（源文件头 <code>SPDX-License-Identifier</code> 逐条可查）</dd>
+      <dd data-i18n-html="license.own.licval">PARLZ.LICENSE Version 1.7（源文件各自标注许可头；加进内核树的文件仍是 GPL-2.0-only）</dd>
       <dt data-i18n="license.own.scope">范围</dt>
-      <dd data-i18n-html="license.own.scopeval"><code>userland/</code>（自研 sh / login / install / cpfs / mkfs / pm / ppm 等）、
-          <code>scripts/</code>、内核里的 Parlz 标识层（<code>include/linux/parlz*.h</code>、
-          <code>arch/x86/kernel/parlz.c</code>、<code>head64.c</code> 的一行挂钩）</dd>
+      <dd data-i18n-html="license.own.scopeval"><code>userland/</code>（自研 sh / login / install / cpfs / mkfs / pm /
+          dpkg / apt / rpm / yum 等）、
+          <code>scripts/</code>、<code>web/</code> 与文档。Parlz 加进
+          <code>linux-7.2.5/</code> 的文件（标识层：<code>include/linux/parlz*.h</code>、
+          <code>arch/x86/kernel/parlz.c</code>、<code>head64.c</code> 的一行挂钩，
+          以及 <code>setup.ld</code> 的填充修复等）**不在**本范围内，仍按 GPL-2.0-only 授权</dd>
       <dt data-i18n="license.own.text">许可正文</dt>
-      <dd><a class="u" href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.html" target="_blank" rel="noopener">GPL-2.0 ↗</a> ·
+      <dd><a class="u" href="PARLZ.LICENSE">PARLZ.LICENSE 1.7</a> ·
+          <a class="u" href="LICENSE">分层授权说明（仓库根 LICENSE）</a> ·
+          <a class="u" href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.html" target="_blank" rel="noopener">GPL-2.0 ↗</a> ·
           <a class="u" href="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/LICENSES/exceptions/Linux-syscall-note" target="_blank" rel="noopener">Linux-syscall-note ↗</a></dd>
       <dt data-i18n="license.own.notes">发行说明</dt>
-      <dd data-i18n="license.own.notesval">内核与自有代码同以 GPL-2.0 发布；ISO/IMG 等二进制产物随附对应源码树，
+      <dd data-i18n="license.own.notesval">授权是分层的：内核（含 Parlz 自己加进内核的文件）是
+          GPL-2.0-only，不能被重新授权；内核之外我们自己写的部分适用 PARLZ.LICENSE 1.7。
+          ISO/IMG 等二进制产物随附许可证全文（盘内 <code>/usr/share/licenses</code>，引导分区
+          <code>LICENSE.TXT</code> / <code>COPYING.TXT</code>）与对应源码树，
           获取方式与构建命令见首页。</dd>
     </dl>
   </section>
@@ -152,7 +160,7 @@
       <dt data-i18n="license.ref.boot">引导</dt>
       <dd data-i18n-html="license.ref.bootval">SYSLINUX 的 <code>mbr.bin</code>（LBA 0）+ VBR + ISOLINUX（El Torito）</dd>
       <dt data-i18n="license.ref.pm">包管理</dt>
-      <dd data-i18n-html="license.ref.pmval">自有 <code>pm</code>（兼容上游 feed 索引格式）+ 上游 opkg 作为参照</dd>
+      <dd data-i18n-html="license.ref.pmval">自有 <code>pm</code> + 自研移植的 <code>dpkg</code>/<code>apt</code>/<code>rpm</code>/<code>yum</code>（包格式与索引沿用上游公开规范，不链接上游代码，也不验 GPG 签名）</dd>
       <dt data-i18n="license.ref.toolchain">工具链包</dt>
       <dd data-i18n-html="license.ref.toolchainval">GCC 13（<code>gcc.pm</code>）、LLVM/clang 18.1.3（<code>clang.pm</code>）</dd>
     </dl>

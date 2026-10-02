@@ -1,0 +1,19 @@
+third_party/licenses/<组件>/ = 交付物里上游组件的许可证**全文**。
+
+build-userland.sh 把每个子目录原样拷进 rootfs 的 /usr/share/licenses/<组件>/,
+gen-fatboot.sh 另把 GPLv2 全文与一份分层授权说明放进引导分区(vmlinuz 所在处),
+build-iso.sh 放进 ISO 根。分层授权的完整说明见仓库根的 LICENSE。
+
+组件与许可证标识(与 web/license.html 同一份清单):
+  linux-kernel  GPL-2.0-only (+ Linux-syscall-note)   linux-7.2.5/ 整树
+  busybox       GPL-2.0                               /sbin/busybox
+  syslinux      GPL-2.0-or-later                      引导分区 mbr.bin/VBR/ldlinux.*
+  bash          GPL-3.0-or-later                      /bin/bash
+  nano          GPL-3.0-or-later                      /bin/nano(core.pm)
+  wget          GPL-3.0-or-later                      /bin/wget
+  glibc         LGPL-2.1-or-later                     静态链进所有用户空间命令
+  openssl       Apache-2.0                            PazeSSL/curl/wget 的 TLS 后端
+  curl          curl(MIT/X 系)                        /bin/curl
+  miniz         Miniz license(MIT 风格)               userland/miniz_tinfl.c
+
+新增上游件时: 在 build 脚本里跑一次本脚本补文本, 并在仓库根 LICENSE 的表格里加一行。

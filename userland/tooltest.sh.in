@@ -1,92 +1,90 @@
 #!/bin/sh
-# tooltest.sh — guest 内工具链验收脚本(仅 toolchain-verify.sh 注入的构建会带)
-# 验收: gcc/clang 各编译 C(动态) + C++(静态) 并运行产物。
-#   gcc: -B 双前缀(包内 libexec 找 cc1/collect2/as/ld) + -I 包内私头 + -L 包内 lib
-#   clang: --gcc-toolchain 指包内 gcc-15(驱动探测到包内布局, crt/libgcc 用包内路径)
-#   动态产物 -Wl,-rpath-link/-rpath 指包内 lib(NEEDED 定位), 运行靠
-#   /lib64/ld-linux(INTERP)+ LD_LIBRARY_PATH(init 已设)+ 包内全部 .so。
-# 全过 TC_ALL_OK, 否则 TC_FAIL。
+# tooltest.sh — guest 内工具链验收(仅 PARLZ_TC_BUNDLED=1 + toolchain-verify.sh
+# 注入的构建会带; 常规交付用 pm-verify.sh 那条"pm install 后裸命令"的路)。
+#
+# 判据三条硬规矩(与 scripts/toolchain-dyn-verify.sh 同一套):
+#   1) 开头 unset LD_LIBRARY_PATH/CPATH/LIBRARY_PATH —— 带着 boot 脚本给的
+#      兜底变量去测, 证明不了包自包含;
+#   2) 判据取**产物跑出来的字**与 readelf 的 DT_NEEDED/PT_INTERP,
+#      不看编译器自己打的 "OK", 也不用 `file`(我们的 file 不打那句);
+#   3) 目录按 /opt/toolchain/gcc-* / llvm-* 探测, 不焊版本
+#      (以前焊 gcc-15/libexec/.../15, 24.04 上全是空路径)。
+# 全过打印 TC_ALL_OK, 否则 TC_FAIL。
 
-G15=/opt/toolchain/gcc-15
-LX="$G15/libexec/gcc/x86_64-linux-gnu/15"
-LIB="/lib/toolchain"
-L15="$G15/lib/gcc/x86_64-linux-gnu/15"
-GI="-I$G15/include"
-GB="gcc -B$LX -B$G15/bin $GI -L $LIB -L $L15 -L $G15/bin"
-CB="g++ -B$LX -B$G15/bin $GI -L $LIB -L $L15 -L $G15/bin"
-CC="clang --gcc-toolchain=$G15 $GI -L $LIB -L $L15 -L $G15/lib -Wl,-rpath-link,$LIB -Wl,-rpath-link,$L15 -Wl,-rpath,$LIB -Wl,-rpath,$L15"
+unset LD_LIBRARY_PATH CPATH LIBRARY_PATH CFLAGS CXXFLAGS LDFLAGS
+export PATH=/usr/bin:/usr/sbin:/usr/local/bin:/bin:/sbin
 
-echo "=== tooltest: 版本 ==="
-gcc --version 2>&1 | head -1
-g++ --version 2>&1 | head -1
-clang --version 2>&1 | head -1
-llvm-config --version 2>&1
+TCG=""; TCL=""
+for d in /opt/toolchain/gcc-*;  do [ -d "$d" ] && TCG="$d"; done
+for d in /opt/toolchain/llvm-*; do [ -d "$d" ] && TCL="$d"; done
+echo "=== tooltest: 工具链落点 ==="
+echo "gcc=${TCG:-无} llvm=${TCL:-无}"
+[ -n "$TCG" ] || { echo "TC_FAIL (initramfs 里没有工具链: 需 PARLZ_TC_BUNDLED=1)"; exit 1; }
+for f in gcc g++ cc clang clang++ readelf as ld; do
+  command -v $f >/dev/null 2>&1 && echo "  $f -> $(command -v $f)" || echo "  $f 缺失"
+done
 
 FAIL=0
-
-# 源码(printf 生成, 不用 heredoc: WSL 宿主中间层会吞 heredoc 产生 0 字节源文件)
-printf '#include <stdio.h>\nint main(){ printf("C_dyn_ok\\n"); return 0; }\n' > /tmp/tc_c.c
-printf '#include <iostream>\nint main(){ std::cout << "CPP_static_ok" << std::endl; return 0; }\n' > /tmp/tc_cpp.cpp
-[ "$(wc -c < /tmp/tc_c.c)" -gt 30 ] || { echo "TC_SRC_FAIL tc_c.c=$(wc -c < /tmp/tc_c.c)"; exit 1; }
-[ "$(wc -c < /tmp/tc_cpp.cpp)" -gt 30 ] || { echo "TC_SRC_FAIL tc_cpp.cpp=$(wc -c < /tmp/tc_cpp.cpp)"; exit 1; }
-
-# 1. gcc 动态 C(包内 binutils 链接 + 显式 libc: 默认链接器出的产物
-# NEEDED 缺 libc.so.6, 动态装载器起不来 SEGV; -l:libc.so.6 补 NEEDED)
-if $GB -l:libc.so.6 -Wl,-rpath,$LIB -o /tmp/tc_cdyn /tmp/tc_c.c 2>/tmp/tc_err1; then
-  if /tmp/tc_cdyn >/tmp/tc_cdyn.out 2>&1 && grep -q C_dyn_ok /tmp/tc_cdyn.out; then
-    echo "gcc C dyn: PASS"
+# $1=描述 $2=期望字 $3=编译命令 $4=产物
+run_case(){ local d="$1" want="$2" cmd="$3" bin="$4" r out
+  sh -c "$cmd" > /tmp/tt_b 2>&1; r=$?
+  # 诊断一律用 cat: head/tail/wc/sed 在默认系统里被裁进 core.pm, 用它们取
+  # 错误信息会得到空串, FAIL 就退化成"rc=1 什么也没说"。
+  if [ $r -ne 0 ]; then echo "  $d: FAIL(编译 rc=$r)"; cat /tmp/tt_b; FAIL=1; return; fi
+  out=$("$bin" 2>&1); r=$?
+  case "$out" in
+    *"$want"*) echo "  $d: PASS" ;;
+    *) echo "  $d: FAIL(运行 rc=$r out=[$out])"; FAIL=1 ;;
+  esac
+}
+need_case(){ local d="$1" pat="$2" bin="$3"
+  if readelf -d "$bin" 2>/dev/null | grep -qF -- "$pat"; then
+    echo "  $d: PASS"
   else
-    echo "gcc C dyn: FAIL (产物跑不起来)"; cat /tmp/tc_cdyn.out; tail -3 /tmp/tc_err1; FAIL=1
+    echo "  $d: FAIL(动态段里没有 $pat)"; readelf -d "$bin" 2>&1; FAIL=1
   fi
-else
-  echo "gcc C dyn: FAIL (编译)"; tail -5 /tmp/tc_err1; FAIL=1
-fi
+}
 
-# 2. gcc 静态 C++
-if $CB -B$LIB -static -fno-pie -o /tmp/tc_cppst /tmp/tc_cpp.cpp 2>/tmp/tc_err2; then
-  if /tmp/tc_cppst >/tmp/tc_cppst.out 2>&1 && grep -q CPP_static_ok /tmp/tc_cppst.out; then
-    echo "g++ C++ static: PASS"
-  else
-    echo "g++ C++ static: FAIL"; cat /tmp/tc_cppst.out; tail -3 /tmp/tc_err2; FAIL=1
-  fi
-else
-  echo "g++ C++ static: FAIL (编译)"; tail -5 /tmp/tc_err2; FAIL=1
-fi
+# 源码用 printf 生成(不用 heredoc: 宿主 WSL 中间层会吞 heredoc 产生 0 字节文件)
+printf '#include <stdio.h>\nint main(){ printf("C_dyn_ok\\n"); return 0; }\n' > /tmp/tt_c.c
+printf '#include <iostream>\nint main(){ std::cout << "CPP_dyn_ok" << std::endl; return 0; }\n' > /tmp/tt_cx.cc
+printf 'int foo(void); int foo(void){ return 42; }\n' > /tmp/tt_lib.c
+printf '#include <stdio.h>\nextern int foo(void);\nint main(){ printf("LIB_ok %%d\\n", foo()); return 0; }\n' > /tmp/tt_use.c
+printf '#include <stdio.h>\n#include <dlfcn.h>\nint main(){ void*h=dlopen("libttfoo.so.1",RTLD_NOW); if(!h){printf("DL_fail\\n");return 2;} int(*f)(void)=dlsym(h,"foo"); printf("DLOPEN_ok %%d\\n", f?f():-1); return 0; }\n' > /tmp/tt_dl.c
+for f in tt_c.c tt_cx.cc tt_lib.c tt_use.c tt_dl.c; do
+  # [ -s ] 而不是 `wc -c`: 默认系统里 wc 被裁进 core.pm 了, 取不到数会让
+  # 这一判据假红(判据不许依赖被裁的命令)。
+  [ -s /tmp/$f ] || { echo "  TC_SRC_FAIL /tmp/$f 不存在或为空"; echo TC_FAIL; exit 1; }
+done
 
-# 3. clang 动态 C(包内 binutils 链接 + 显式 libc, 同 gcc dyn 的 NEEDED 修复)
-if $CC -B$LIB -fuse-ld=bfd -l:libc.so.6 -o /tmp/tc_ccdyn /tmp/tc_c.c 2>/tmp/tc_err3; then
-  if /tmp/tc_ccdyn >/tmp/tc_ccdyn.out 2>&1 && grep -q C_dyn_ok /tmp/tc_ccdyn.out; then
-    echo "clang C dyn: PASS"
-  else
-    echo "clang C dyn: FAIL"; cat /tmp/tc_ccdyn.out; tail -3 /tmp/tc_err3; FAIL=1
-  fi
-else
-  echo "clang C dyn: FAIL (编译)"; tail -5 /tmp/tc_err3; FAIL=1
-fi
+echo "=== 裸命令动态编译 + 运行(无 -I -B -L -l: -rpath) ==="
+run_case "gcc C 动态"   "C_dyn_ok"   "gcc -o /tmp/tt1 /tmp/tt_c.c"        /tmp/tt1
+need_case "gcc 产物 DT_NEEDED libc.so.6" "libc.so.6" /tmp/tt1
+readelf -lW /tmp/tt1 2>/dev/null | grep -q "ld-linux-x86-64.so.2" \
+  && echo "  gcc 产物 PT_INTERP: PASS" || { echo "  gcc 产物 PT_INTERP: FAIL"; FAIL=1; }
+run_case "g++ C++ 动态" "CPP_dyn_ok" "g++ -o /tmp/tt2 /tmp/tt_cx.cc"      /tmp/tt2
+need_case "g++ 产物 DT_NEEDED libstdc++.so.6" "libstdc++.so.6" /tmp/tt2
+run_case "clang C 动态"   "C_dyn_ok"   "clang -o /tmp/tt3 /tmp/tt_c.c"    /tmp/tt3
+run_case "clang++ C++ 动态" "CPP_dyn_ok" "clang++ -o /tmp/tt4 /tmp/tt_cx.cc" /tmp/tt4
 
-# 4. clang 静态 C
-if $CC -B$LIB -static -fno-pie -o /tmp/tc_cst /tmp/tc_c.c 2>/tmp/tc_err4; then
-  if /tmp/tc_cst >/tmp/tc_cst.out 2>&1 && grep -q C_dyn_ok /tmp/tc_cst.out; then
-    echo "clang C static: PASS"
-  else
-    echo "clang C static: FAIL"; cat /tmp/tc_cst.out; tail -3 /tmp/tc_err4; FAIL=1
-  fi
-else
-  echo "clang C static: FAIL (编译)"; tail -5 /tmp/tc_err4; FAIL=1
-fi
+echo "=== 自家共享库: -fPIC -shared → 装默认目录 → 链接 + dlopen ==="
+run_case "gcc -fPIC -shared 出库 + 链接 -lttfoo" "LIB_ok 42" \
+  "gcc -fPIC -shared -Wl,-soname,libttfoo.so.1 -o /tmp/libttfoo.so.1 /tmp/tt_lib.c \
+   && cp /tmp/libttfoo.so.1 /usr/lib/x86_64-linux-gnu/ \
+   && ln -sf libttfoo.so.1 /usr/lib/x86_64-linux-gnu/libttfoo.so \
+   && gcc -o /tmp/tt5 /tmp/tt_use.c -lttfoo" /tmp/tt5
+run_case "dlopen 按 soname 命中" "DLOPEN_ok 42" "gcc -o /tmp/tt6 /tmp/tt_dl.c -ldl" /tmp/tt6
 
-echo "=== 动态产物 rpath ==="
-readelf -d /tmp/tc_cdyn 2>/dev/null | grep -E "RPATH|RUNPATH|NEEDED" | head -5 || \
-  strings /tmp/tc_cdyn 2>/dev/null | grep -m1 "ld-linux"
+echo "=== 静态那条路(initramfs 里所有命令都靠它, 不许退化) ==="
+run_case "gcc -static C" "C_dyn_ok"   "gcc -static -o /tmp/tt7 /tmp/tt_c.c"     /tmp/tt7
+run_case "g++ -static C++" "CPP_dyn_ok" "g++ -static -o /tmp/tt8 /tmp/tt_cx.cc" /tmp/tt8
+[ -z "${LD_LIBRARY_PATH:-}" ] && echo "  环境仍无 LD_LIBRARY_PATH: PASS" \
+  || { echo "  环境被填回去了: FAIL"; FAIL=1; }
 
-echo "=== 相对路径 execve 验收(用户报 ./gcc ./c++ 失败) ==="
+echo "=== 相对路径 execve(用户报 ./gcc ./c++ 失败) ==="
 cd /bin
-echo "PWD=$(pwd)"
-ls -la /bin/gcc /bin/c++ 2>&1 | head -4
-echo "--- 宿主侧 stat 软链链:"
-ls -la /usr/bin/gcc /usr/bin/c++ 2>&1 | head -4
-./gcc --version 2>&1 | head -1 && echo "./gcc: PASS" || echo "./gcc: FAIL"
-./c++ --version 2>&1 | head -1 && echo "./c++: PASS" || echo "./c++: FAIL"
-gcc --version 2>&1 | head -1 && echo "gcc(PATH): PASS" || echo "gcc(PATH): FAIL"
+./gcc --version >/dev/null 2>&1 && echo "  ./gcc: PASS" || { echo "  ./gcc: FAIL"; FAIL=1; }
+./g++ --version >/dev/null 2>&1 && echo "  ./g++: PASS" || { echo "  ./g++: FAIL"; FAIL=1; }
+gcc --version >/dev/null 2>&1 && echo "  gcc(PATH): PASS" || { echo "  gcc(PATH): FAIL"; FAIL=1; }
 
 [ "$FAIL" -eq 0 ] && echo "TC_ALL_OK" || echo "TC_FAIL"

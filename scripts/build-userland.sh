@@ -176,8 +176,31 @@ export PS1='\u@\h:\w\$ '
 export PATH=/usr/bin:/usr/sbin:/usr/local/bin:/bin:/sbin
 cd "$HOME"
 EOF
-mkdir -p "$ROOT/usr/share/licenses/bash"
-cp /mnt/f/Linux/Parlz/third_party/licenses/bash/COPYING "$ROOT/usr/share/licenses/bash/"
+# ---- 许可证文本: 交付盘里必须带(GPLv2 §3 / LGPL-2.1 §6) ----
+# 引导分区上那个 vmlinuz 是**改过的 Linux 内核二进制**, 分发它却没在介质上
+# 复现许可证文本 = 硬违规; 用户空间又全是静态链 glibc(LGPL-2.1), 得能给到
+# 可重链接材料/源码。以前这里只拷了 bash 一份 COPYING, 盘上其余一个字都没有。
+# third_party/licenses/<组件>/ 整树 -> /usr/share/licenses/<组件>/,
+# 外加仓库根的 PARLZ.LICENSE 与 LICENSE(分层授权说明)。
+# 文本由 scripts/vendor-licenses.sh 一次性收进仓库 —— 不从构建机的
+# /usr/share/common-licenses 现拷, 免得换宿主就悄悄少文件、没人报错。
+LIC=/mnt/f/Linux/Parlz/third_party/licenses
+[ -d "$LIC" ] || { echo "    缺 $LIC(先跑 scripts/vendor-licenses.sh)"; exit 1; }
+mkdir -p "$ROOT/usr/share/licenses/parlz"
+for d in "$LIC"/*/; do
+  [ -d "$d" ] || continue
+  n=$(basename "$d")
+  mkdir -p "$ROOT/usr/share/licenses/$n"
+  cp -a "$d." "$ROOT/usr/share/licenses/$n/"
+done
+cp -a "$LIC/README" "$ROOT/usr/share/licenses/README"
+cp -a /mnt/f/Linux/Parlz/PARLZ.LICENSE /mnt/f/Linux/Parlz/LICENSE \
+      "$ROOT/usr/share/licenses/parlz/"
+# 根目录再放一份"介质副本"说明: rootfs 平铺进 ISO 时它就在 ISO 根,
+# cpfs 装盘时也跟着进已安装根 —— 与引导分区上那份 LICENSE.TXT 逐字同源
+# (同一份 third_party/licenses/PARLZ-MEDIA-LICENSE.txt, 别各写一份)。
+cp -a "$LIC/PARLZ-MEDIA-LICENSE.txt" "$ROOT/LICENSE.TXT"
+echo "    许可证: $(ls -1 "$ROOT/usr/share/licenses" | tr '\n' ' ')"
 cat > "$ROOT/etc/passwd" <<'EOF'
 root:x:0:0:root:/root:/bin/bash
 EOF
@@ -189,7 +212,7 @@ EOF
 # 并调用 applet 子命令如 busybox grep,那些不存在)。
 # nano 是独立 gcc 直接编的(不在 CMake 目标里),单独拷
 [ -f build/bin/nano ] && cp build/bin/nano "$ROOT/bin/nano"
-for t in cat mount umount free dmesg mkdir rm file cp curl ifc ifconfig mkfs cpfs fdisk install boot mknod login user grep head tail wc sort sed awk which ps df ln mv tree ppm opkg ping wget frpc openvpn chmod audio w3m pweb pms pm
+for t in cat mount umount free dmesg mkdir rm file cp curl ifc ifconfig mkfs cpfs fdisk install boot mknod login user grep head tail wc sort sed awk which ps df ln mv tree dpkg rpm apt yum ping wget frpc openvpn chmod audio w3m pweb pms pm
 do
   cp "build/bin/$t" "$ROOT/bin/$t"
 done
@@ -202,13 +225,59 @@ chmod +x "$ROOT/sbin/busybox" "$ROOT/bin/"* 2>/dev/null
 # busybox-init 钩子也要可执行
 chmod +x "$ROOT/etc/inittab" "$ROOT/usr/local/bin/parlz-boot.sh" 2>/dev/null
 
-# --- OPKG(真实上游 0.8.0 静态后端)+ PPM 委托层 ---
-# build-opkg.sh 产出 /home/jgzyes/parlz-opkg/stage(二进制 + /etc/opkg
-# 默认配置 + 上游 intercept 脚本 + 许可证),整树合并进 rootfs。
-# 失败则中止:initramfs 里 ppm/opkg 必须指向真实 opkg-native。
-sh /mnt/f/Linux/Parlz/scripts/build-opkg.sh || { echo "    缺 /home/jgzyes/parlz-opkg/stage,中止:opkg 无法合入 rootfs"; exit 1; }
-[ -d /home/jgzyes/parlz-opkg/stage ] || { echo "    opkg stage 缺失(WSL 虚盘重建后需先跑 build-opkg.sh),中止"; exit 1; }
-cp -a /home/jgzyes/parlz-opkg/stage/. "$ROOT/"
+# --- 包管理器的默认配置 ---
+# 2026-09-30: 上游 OPKG 已移除(连同 /home/jgzyes/parlz-opkg 那套 stage),
+# 换成自己移植的 dpkg/rpm/apt/yum 四件 —— 它们在上面的二进制清单里,
+# 这里只配"源"。三件事必须记住:
+#   1. **默认不给任何 deb/rpm 源**。www.parlz.com/feed 是 .pm 格式, 不是
+#      Debian/Fedora 仓库格式, 硬指过去只会让 apt/yum 报"取不到索引"。
+#      pm 的默认源仍是官网镜像站(见 AGENTS.md 那三条一致的要求)。
+#   2. 本实现**不验 GPG 签名**, 所以 apt 的 trusted=yes 与 yum 的
+#      gpgcheck=0 是"你自己承担风险"的显式开关 —— 配置文件里把这句话写明。
+#   3. 装完包后 /var/lib/{dpkg,rpm} 才有内容; initramfs 里 /var 是 tmpfs,
+#      装的东西重启就没了(装进已安装的磁盘根才持久)。
+mkdir -p "$ROOT/etc/apt" "$ROOT/etc/yum.repos.d"
+# 包管理器的状态目录必须在 rootfs 里就存在: 以前 $ROOT/var 是靠合并
+# opkg stage 时带进来的, 移除 opkg 后整个 /var 从 rootfs 消失了 ——
+# 装盘的宿主复核(check-installed-root.sh)要求已安装根里有 /var,
+# 而 dpkg/rpm/apt/yum 的状态库与下载缓存本来就落在 /var 下。
+mkdir -p "$ROOT/var/lib/dpkg/info" "$ROOT/var/lib/dpkg/parts" \
+         "$ROOT/var/lib/rpm/installed" "$ROOT/var/lib/rpm/scriptlets" \
+         "$ROOT/var/lib/apt/lists/partial" "$ROOT/var/cache/apt/archives/partial" \
+         "$ROOT/var/cache/yum" "$ROOT/var/log" "$ROOT/var/tmp"
+for d in "$ROOT/var/lib/dpkg" "$ROOT/var/lib/dpkg/info" "$ROOT/var/lib/rpm" \
+         "$ROOT/var/lib/rpm/installed" "$ROOT/var/lib/apt/lists" \
+         "$ROOT/var/cache/apt/archives" "$ROOT/var/cache/yum" \
+         "$ROOT/var/log" "$ROOT/var/tmp"; do
+    chmod 755 "$d"
+done
+cat > "$ROOT/etc/apt/sources.list" <<'EOF'
+# ParlzOS 的 apt 源清单(本文件的格式与 Debian 一致)
+#
+#   deb [选项] <URI> <发行> <组件>...
+#
+# 索引取 <URI>/dists/<发行>/<组件>/binary-<架构>/Packages[.gz]。
+# 默认**没有任何源**: 官方镜像站 www.parlz.com/feed 是 .pm 格式, apt 读不了。
+# 要接一个真 deb 仓库, 自己加一行, 例如:
+#   deb [trusted=yes] http://192.168.1.5/repo stable main
+# trusted=yes 的含义在本实现里不是"签名可信", 而是"我知道没有 GPG 校验,
+# 仍要用这个源" —— 不写它 apt 会拒绝安装那里的包(改用 --allow-unauthenticated
+# 是同一个意思的临时开关)。下载后仍会按索引声明的 Size + SHA256 核对。
+EOF
+cat > "$ROOT/etc/yum.repos.d/README" <<'EOF'
+# ParlzOS 的 yum 仓库目录: 每个 *.repo 一个 INI 文件
+#
+#   [仓库id]
+#   name=随便
+#   baseurl=http://主机/路径
+#   enabled=1
+#   gpgcheck=0
+#
+# 索引取 <baseurl>/repodata/repomd.xml 里 type="primary" 那项。
+# 默认**没有任何仓库**: 官方镜像站是 .pm 格式, 不是 rpm repodata。
+# gpgcheck 不写或写 1 时 yum 会拒绝安装(本实现不验包签名), 要显式 gpgcheck=0
+# 或临时加 --nogpgcheck。下载后仍会按 repomd/primary 声明的 sha256 核对。
+EOF
 
 # initramfs 需要 /bin/sh 存在,且 init 的 execl 指向 /bin/sh
 
@@ -239,6 +308,9 @@ builder: $PARLZ_BUILDER
 build-tz: $PARLZ_BUILD_TZ
 build-time: $PARLZ_BUILD_TIME
 kernel-release: 7.2.5-$PARLZ_RELEASE_ID
+license: mixed (kernel=GPL-2.0-only, parlz=PARLZ.LICENSE, upstream=各自; 见 /usr/share/licenses)
+license-dir: /usr/share/licenses
+source-url: https://www.parlz.com/git
 EOF
 echo "Parlz $PARLZ_VERSION ($PARLZ_RELEASE_ID)" > "$ROOT/parlz/banner"
 echo "    发布号: $PARLZ_RELEASE_ID"
@@ -322,7 +394,7 @@ EOF
 chmod +x "$ROOT/install.d"
 
 # 网络自测脚本(init 存在时自动跑,输出到串口)
-# 2026-09-17: 扩展为本轮验收项(bash 特性/chmod/opkg 委托/curl HTTP+HTTPS)。
+# 2026-09-17 扩展, 2026-09-30 把 opkg 委托两项换成 dpkg/rpm/apt/yum 四件套。
 # 由 /bin/sh 执行 → shx 分流到 bash(POSIX 模式),||/&&/行续合法。
 cat > "$ROOT/nettest.sh" <<'EOF'
 #!/bin/sh
@@ -343,9 +415,11 @@ printf 'alpha one\nbeta two\nalpha three\n' > /tmp/gt.txt
 grep alpha /tmp/gt.txt > /tmp/grep_out.txt
 N=$(wc -l < /tmp/grep_out.txt)
 [ "$N" -eq 2 ] && echo GREP_FILE_OK || echo "GREP_FILE_FAIL N=$N"
-echo "=== TEST: opkg/ppm 委托 ==="
-opkg --version
-ppm opkg --version
+echo "=== TEST: 包管理器四件套(自研移植) ==="
+dpkg --version
+rpm --version
+apt --version
+yum --version
 echo "=== TEST: curl HTTP(host 10.0.2.2:8080) ==="
 curl -s -m 10 -o /tmp/h.txt http://10.0.2.2:8080/hello.txt \
   && cat /tmp/h.txt && echo HTTP_OK
@@ -419,28 +493,40 @@ TCEOF
     esac
     ln -sf "$t" "$ROOT/bin/$l"
   done
-  # 驱动硬编码的 /usr/lib/x86_64-linux-gnu/{libm-2.43.a,libc.so.6,...} 绝对路径:
-  # 包内造 /usr/lib 软链树指回 /lib/toolchain, 让 guest 里驱动注入的绝对路径可命中。
-  mkdir -p "$ROOT/usr/lib/x86_64-linux-gnu"
+  # 驱动/链接器脚本与 ld.so 都硬编码这些绝对目录(glibc 的 libc.so 脚本写
+  # /lib/x86_64-linux-gnu, ld.so 无 /etc/ld.so.cache 时默认搜 /lib 与
+  # /usr/lib 下的 multiarch 目录)。★ 少了哪一处, guest 里的"动态编译"就退回
+  # 需要 LD_LIBRARY_PATH —— 三棵树一次铺齐。
+  mkdir -p "$ROOT/usr/lib/x86_64-linux-gnu" "$ROOT/lib/x86_64-linux-gnu"
   for f in "$ROOT/lib/toolchain/"*; do
     b=$(basename "$f")
+    [ -d "$f" ] && continue          # gcc/ 那一支是包内私树, 链出去会污染
     ln -sf "/lib/toolchain/$b" "$ROOT/usr/lib/x86_64-linux-gnu/$b" 2>/dev/null
+    ln -sf "/lib/toolchain/$b" "$ROOT/lib/x86_64-linux-gnu/$b"   2>/dev/null
+    ln -sf "/lib/toolchain/$b" "$ROOT/lib/$b"                    2>/dev/null
   done
-  # gcc 驱动(收集器)硬编码的版本化静态库 libm-2.43.a/libmvec.a:
-  # 系统里 libm-2.43.a 是 ld script(GROUP 指向 libm.a+libmvec.a), 包内无该脚本;
-  # 直接拷真实 .a 档案(宿主 2.43 同源)进软链树
-  cp -aL /usr/lib/x86_64-linux-gnu/libm-2.43.a "$ROOT/usr/lib/x86_64-linux-gnu/libm-2.43.a" 2>/dev/null || true
-  cp -aL /usr/lib/x86_64-linux-gnu/libmvec.a "$ROOT/usr/lib/x86_64-linux-gnu/libmvec.a" 2>/dev/null || true
-  # gcc 私目录: /usr/lib/gcc/x86_64-linux-gnu/15 → 包内 G15
-  mkdir -p "$ROOT/usr/lib/gcc/x86_64-linux-gnu"
-  ln -sf "/opt/toolchain/gcc-$TCG_NAME/lib/gcc/x86_64-linux-gnu/15" \
-    "$ROOT/usr/lib/gcc/x86_64-linux-gnu/15"
+  # gcc 私目录: /usr/lib/gcc/x86_64-linux-gnu/<版本> → 包内 G15
+  # (版本从包内实际目录反推, 以前写死 15 = 旧 26.04 宿主, 24.04 上是个
+  #  指向不存在目录的软链, 裸 gcc 找 libgcc/crtbeginS.o 全落空)
+  GVC=$(ls -1 "$ROOT/opt/toolchain/gcc-$TCG_NAME/lib/gcc/x86_64-linux-gnu" 2>/dev/null | head -1)
+  if [ -n "$GVC" ]; then
+    mkdir -p "$ROOT/usr/lib/gcc/x86_64-linux-gnu"
+    ln -sfn "/opt/toolchain/gcc-$TCG_NAME/lib/gcc/x86_64-linux-gnu/$GVC" \
+      "$ROOT/usr/lib/gcc/x86_64-linux-gnu/$GVC"
+  else
+    echo "    WARNING: 包内没有 lib/gcc/x86_64-linux-gnu/<版本>, gcc 驱动将找不到 crt"
+  fi
   # 系统 C 头文件: C++ 标准库 #include_next <stdlib.h> 等需要系统 C 头,
   # gcc/clang 默认搜索 /usr/include(宿主 WSL 系统路径), guest 里建软链到
   # 包内 include(已含系统 C 头副本, build-toolchain.sh 打包时拷入)。
   if [ -d "$ROOT/opt/toolchain/gcc-$TCG_NAME/include" ]; then
     mkdir -p "$ROOT/usr"
-    ln -sf "/opt/toolchain/gcc-$TCG_NAME/include" "$ROOT/usr/include" 2>/dev/null
+    # 目标已是**目录**时 ln -s 会把链建到它里面(变成 usr/include/include),
+    # 所以只能移走空的; 非空就保留真目录并提示, 别静默把链接塞进去。
+    if [ -d "$ROOT/usr/include" ]; then
+      rmdir "$ROOT/usr/include" 2>/dev/null || echo "    WARNING: rootfs 已有非空 /usr/include, 不改成软链"
+    fi
+    [ -e "$ROOT/usr/include" ] || ln -sfn "/opt/toolchain/gcc-$TCG_NAME/include" "$ROOT/usr/include"
   fi
   echo "    工具链: gcc-$TCG_NAME=$(du -sh $ROOT/opt/toolchain/gcc-$TCG_NAME | cut -f1), llvm-$TCL_NAME=$(du -sh $ROOT/opt/toolchain/llvm-$TCL_NAME | cut -f1)"
 else
@@ -462,7 +548,11 @@ if [ -f "$TLIST" ]; then
         # KEEP: 名字撞车但那是 Parlz 自己的东西, 不能走 ——
         #   install = 我们的装盘安装器(与 busybox 的拷贝 applet 同名, 见
         #   gen-busybox-links.sh 的跨目录重名保护); 装盘链路依赖它。
-        case " install " in *" $n "*) continue ;; esac
+        #   dpkg/rpm = 我们移植的包管理器底层。名单里这两个名字是历史上给
+        #   busybox applet 准备的; 现在有了真二进制, 裁掉就等于把 apt/yum 的
+        #   后端删了(apt 找不到 /bin/dpkg、yum 找不到 /bin/rpm 只能报错),
+        #   而 core.pm 里也不该有一份同名 .pm —— 包管理器必须在默认系统里。
+        case " install dpkg rpm apt yum " in *" $n "*) continue ;; esac
         for d in bin sbin usr/bin usr/sbin; do
             p="$ROOT/$d/$n"
             if [ -f "$p" ] && [ ! -L "$p" ]; then
@@ -474,7 +564,7 @@ if [ -f "$TLIST" ]; then
     done
     for x in $TRIMMED_BIN; do echo "$x"; done | LC_ALL=C sort > "$ROOT/etc/pm/trimmed-binaries"
     echo ">>> [4.5/5] 默认命令裁剪: 真二进制移出 $(wc -l < "$ROOT/etc/pm/trimmed-binaries") 个($(du -sh $STAGE | cut -f1)), applet 软链不建 $(wc -l < "$ROOT/etc/pm/trimmed-links" 2>/dev/null || echo 0) 个"
-    echo "    留下的关键命令: /bin/install(安装器) /bin/mount /bin/cpfs /bin/login /bin/parlz-sh /sbin/busybox"
+    echo "    留下的关键命令: /bin/install(安装器) /bin/mount /bin/cpfs /bin/login /bin/parlz-sh /sbin/busybox /bin/{dpkg,rpm,apt,yum}(包管理器)"
 else
     echo ">>> [4.5/5] 无 $TLIST, 不裁剪"
 fi

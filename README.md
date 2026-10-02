@@ -172,6 +172,10 @@ Parlz/
 │   ├── cpfs-oracle.sh / check-installed-root.sh  #  宿主侧秒级复核(不起 QEMU)
 │   ├── ifc-verify.sh / ctrl-c-verify.sh / job-control-verify.sh / login-pty-test.py
 │   │                              #   配网(含 ifc dhcp)/ Ctrl+C / 终端前台权 / 登录认证
+│   ├── dpkg-verify.sh / rpm-verify.sh / apt-verify.sh / yum-verify.sh
+│   │   pkg-guest-e2e.sh / rpmhdr.py / rpmsetarch.py / sha256-consts-check.py
+│   │                              #   四个包管理器的宿主侧回归(真 dpkg-deb/rpmbuild/
+│   │                              #   apt-ftparchive/createrepo_c 当对照) + 客内端到端
 │   ├── build-uefi-iso.sh / uefi-e2e.sh
 │   │                              #   UEFI 那条引导路(GRUB 双固件 ISO)与它的端到端验收
 │   ├── gen-efi-esp.sh             #   FAT ESP 镜像(syslinux.efi + 内核),磁盘 UEFI 用
@@ -212,7 +216,7 @@ Parlz/
 
 默认镜像只装启动/装盘必需的东西：`userland/pm-trim.list` 里约 260 个命令名
 （`awk`、`nano`、`curl`/`wget`、`tar`、`sort`/`head`/`tail`/`wc`、`tree`、`file`、
-`free`、`dmesg`、`fdisk`/`mkfs`、`ping`、`w3m`、`pweb`、`audio`、`ppm`、`boot`、`vi` …）
+`free`、`dmesg`、`fdisk`/`mkfs`、`ping`、`w3m`、`pweb`、`audio`、`boot`、`vi` …）
 **不在**默认系统里，`pm install core` 一条命令补齐；`/sbin/busybox` 本体保留，
 任何时候都能 `busybox <命令>` 直接调。装好的盘上 `cat /etc/pm/trimmed-links`、
 `/etc/pm/trimmed-binaries` 就是完整清单。
@@ -233,7 +237,11 @@ Parlz/
 | `cat` / `grep` / `sed` / `df` / `ps` | 查看 / 检索 / 流编辑 / 挂载盘容量 / 进程列表（`/proc`、`statvfs`） |
 | `cp` / `mv` / `rm` / `mkdir` / `ln` / `chmod` / `mknod` | 文件与节点操作（自研真二进制，`mv` 跨设备退化 cp+rm，`chmod` 走 nftw 递归） |
 | `ifc` / `ifconfig` / `which` | 网络配置（`ioctl`+netlink 双路）/ 命令定位 / 别名 |
-| `opkg` / `ppm` | OPKG 上游后端与委托层（`.ipk` 解包安装到 `/` + 登记 `/var/lib/opkg/`，DEFLATE 用 miniz tinfl 纯 C 解） |
+| `dpkg` | `.deb` 底层安装器（ar → `control.tar` + `data.tar`；`-i/-r/-P/-l/-s/-L/-c/-I/--compare-versions`；状态库 `/var/lib/dpkg/status` + `info/<包>.list`；维护脚本走 `/bin/sh`，300 秒上限） |
+| `rpm` | `.rpm` 底层安装器（lead + 签名 header + 主 header + cpio 负载；`-i/-U/-e/-q/-qa/-qi/-ql/-qf/-qp/--compare-versions`；状态库 `/var/lib/rpm/installed/<NVRA>.{meta,list}`，卸载脚本装时落库所以 `-e` 还能跑 `%preun/%postun`） |
+| `apt` | deb 高层前端（`/etc/apt/sources.list` → `dists/<发行>/<组件>/binary-<架构>/Packages[.gz]`；`update/install/remove/purge/search/show/list/policy/clean`；依赖含版本约束与 `a|b` 或关系，删包前查反向依赖；落盘 fork+execv 调 `dpkg`） |
+| `yum` | rpm 高层前端（`/etc/yum.repos.d/*.repo` → `repodata/repomd.xml` → `primary.xml(.gz)`；`makecache/install/update/remove/list/info/search/repolist/clean`；文件型依赖与虚拟 `Provides` 都会解；落盘调 `rpm`） |
+| 包管理器的信任闸门 | **不验 GPG 签名**（说清楚，不冒充完整实现）：apt 要 `[trusted=yes]` 或 `--allow-unauthenticated`，yum 要 `gpgcheck=0` 或 `--nogpgcheck`，否则拒绝安装；索引与包体一律按声明的 Size + SHA256 核对，不符就删掉缓存、绝不交给底层解包。apt/yum **默认没有任何源**——官网 `www.parlz.com/feed` 是 `.pm` 格式，要接真 deb/rpm 仓库自己加一行 |
 | busybox 保留的 applet | `ls` `dd` `sleep` `reboot` `halt` `poweroff` `date` `kill` `uname` `hostname` 等，以软链落在 `/bin`、`/usr/bin` |
 
 ### `pm install core` 补回
@@ -245,7 +253,7 @@ Parlz/
 | 网络 | `curl` `wget` `ping` `nc` `telnet` `tftp` `nslookup` `logger` `syslogd` `klogd` |
 | 归档压缩 | `tar` `gzip` `gunzip` `zcat` `bzip2` `unzip` `xz` `lzma` `cpio` |
 | 磁盘/内存 | `fdisk` `mkfs`（内置 ext2 格式化）`mke2fs` `mkfs.vfat` `mkswap` `swapon` `swapoff` `blkid` `fsck` `shred` `free` `dmesg` `top` `truncate` |
-| Parlz 自有 | `pweb`（Web 服务）`ppm`（委托包管理）`audio`（mp3/wav/flac 播放）`boot`（reboot/halt/poweroff） |
+| Parlz 自有 | `pweb`（Web 服务）`audio`（mp3/wav/flac 播放）`boot`（reboot/halt/poweroff） |
 | 编译器 | 不在本包里，另需 `pm install gcc` / `pm install clang` |
 
 ## 启动流程
@@ -298,7 +306,7 @@ scripts/make-release.sh …`，发布号自动带 `-UN\V` 后缀。VMware 里想
 
 纯黑极简的静态站，**六个页面**：`index.html`（版本号、下载、循环敲代码的展示块）、
 `packages.html`（包列表）、`download.html`（当前版本 + 历代版本 + 校验）、
-`license.html`（许可证与引用：自有代码 GPL-2.0-or-later，上游组件逐项列许可/版本/出处）、
+`license.html`（许可证与引用：内核 GPL-2.0-only、自有非内核部分 PARLZ.LICENSE 1.7、上游组件逐项列许可/版本/出处）、
 `git.html`（**自托管 Git 仓库**：两个克隆入口、仓库内容、只读发布方式、上游与许可）
 与 `sim.html`（**整页模拟机**，见下）。导航顺序固定为
 `首页 · 软件包 · 下载 · 许可证 · 仓库 · 模拟机`（模拟机始终排在页面链接之后，六页逐字一致）。
@@ -355,8 +363,8 @@ en-US 兼作缺词兜底），换语言前正文先 `visibility:hidden`（避免
   > （就是镜像站本体，同一份文件）并**明说用了哪个源**；站点部署到 `https://www.parlz.com/`
   > 之后是同源，直连官网零配置。想让本地预览也直连官网，在官网 nginx 上加一行
   > `add_header Access-Control-Allow-Origin *;`（只对 `/feed/` 开即可）。
-- **大包走真清单**：gcc.pm(454.7 MiB) / clang.pm(966.8 MiB) 浏览器里不下载实体，改读
-  `web/feed/gcc.list` / `clang.list`（真清单：11773 / 7389 个成员，含 165 / 152 条软链目标，
+- **大包走真清单**：gcc.pm(564.4 MiB) / clang.pm(1025.1 MiB) 浏览器里不下载实体，改读
+  `web/feed/gcc.list` / `clang.list`（真清单：12297 / 7798 个成员，含 591 / 520 条软链目标，
   由 `scripts/web-pkg-manifest.py` 从真包流式导出）登记成员。
 - **`gcc` 是子集编译器**：把 `printf/puts + return` 的 C 编成**真 ELF64**（合法头 + PT_LOAD +
   真 x86-64 指令：write(2) + exit(2)），跑它的是内置的极小 x86-64 解释器（只认这条码路）。
@@ -406,20 +414,46 @@ en-US 兼作缺词兜底），换语言前正文先 `visibility:hidden`（避免
 
 ### 自托管 Git 仓库（`git.html` + 仓库根 `git/`）
 
-`git/` 是**要发布的裸库放哪儿**的约定目录（见 `git/README.md`），`git.html` 是它对外的说明页，
-风格与其它页完全一致（同一套 CSS、同样的 hero/浮现/表/代码块）。两个克隆入口指向同一份裸库：
+`git/parlz.git` 是**真仓库**（`sh scripts/git-init-repo.sh` 建/更新，当前 95,107 个文件、pack 353 MiB），
+`git.html` 是它的对外页面 —— 页面风格与其它页完全一致（同一套 CSS 与 hero/浮现/表/代码块），
+上面多一排 cgit 式视图：**`about summary refs log tree commit diff stats`**，往下面是目录树、
+逐文件预览、提交历史。两个克隆入口指向同一份裸库：
 
 ```
 https://www.parlz.com/git/parlz.git     ← 主地址（与本站同域，不用新证书）
 https://git.os.parlz.com/parlz.git      ← 子域入口
 ```
 
-- **只读镜像**：谁都能 `clone`/`fetch`；写入只有服务器本机与 SSH 一条路（`git push --mirror`）。
-- **产物不进仓库**：ISO / IMG / `.pm` 走 `web/downloads/` 与 `web/feed/`，塞进 git 对象库会让
-  一次 clone 拖掉整个 GB。
-- **服务端当前没配**（用户明确不配）：子域 DNS/TLS 与 `/git/` 走 smart-HTTP 的 location 都没上，
+- **仓库内容按 `.gitignore` 的白名单**：`/*` 先全排除，再逐项放行 `linux-7.2.5/`（94,750 个文件的
+  干净源码树）、`userland/`、`scripts/`、`web/`、`NTCLKS-main/`、`PWeb/`、`third_party/`、`vendor/`
+  与几份根文件。工作区根里历次调试留下的暂存目录（`um/ csonly/ cx/ g4/ bin/ mroot/ nanocheck/ …`）
+  与自带 `.git` 的 `TLS-SSH/` 都不进仓库。
+  **⚠ gitignore 没有行尾注释** —— 把说明写在模式同一行，整条模式就永远匹配不上
+  （第一版就是这样把整棵内核树漏掉的，`web-demo-test.js` 现在有断言拦着）。
+- 仓库数据放 `git/parlz.git`，**工作区不放 `.git`**（操作一律显式 `--git-dir` / `--work-tree`，
+  别的工具链还按普通目录树在用）；作者信息用 `-c user.name/-c user.email` 逐条命令传，
+  不落使用者的 git 配置。`core.autocrlf=false` 是硬要求：内核源码树的 LF 不能被 Windows git 改写。
+- **产物不进仓库**：ISO / IMG / `.pm` / `web/rootfs/` 走 `web/downloads/` 与 `web/feed/`，
+  否则一次 clone 就要拖整个 GB。`web/git/`（下面的导出数据）同样是生成物，不进 git。
+- **网页怎么做到"所有文件都能看"**（`sh scripts/web-git-export.sh` 生成 `web/git/`）：
+  · 数据**全部出成 `.js`**（`ParlzGitData["<相对路径>"] = {…}`），浏览器用 **`<script>` 注入**加载 ——
+    **不是 fetch**：本站要求能双击 `file://` 打开，而 file:// 下浏览器一律拦 `fetch`（第一版就是
+    因此报"读不到导出数据"）。`manifest.js` 入口；`t/<顶层条目>.js` 按顶层切的目录索引
+    （进哪块才拉哪块，内核树那份 11.4 MB）；`log.js` + `c/<短哈希>.js` 是历史与提交详情。
+  · `blobs.bin` = 所有**文本**文件按路径序拼成的**一个**文件（95k 个小文件没法手工部署），
+    索引里记 `o`=偏移、`l`=长度，点开某个文件就 **HTTP Range 只取它那一段**（几 KB）——
+    **这一处仍是 fetch**，因为 Range 只能在 http(s) 下用；服务端没回 206 时前端**立刻 cancel 响应体**，
+    否则点一下就把整包拖走；file:// 下发不出 Range，页面就明说"正文预览要 http 打开"，
+    并给一条 `cd web && python3 -m http.server 8000`。
+  文本入库上限 `GIT_MAX_TEXT`（默认 512 KB/文件），二进制与超限文件不进正文库，页面上如实标注。
+  **file:// 双击**时浏览器发不出 Range：树 / 历史 / 提交照看，正文预览给一句实话。
+- **只读镜像**：谁都能 `clone`/`fetch`；写入只有服务器本机与 SSH 一条路
+  （`git push --mirror ssh://jgzyes@git.os.parlz.com/srv/git/parlz.git`）。
+- **服务端还没配**（用户明确不配）：子域 DNS/TLS 与 `/git/` 走 smart-HTTP 的 location 都没上，
   在那之前 `git clone` 这两个地址是连不通的 —— 页面上就照实写了"待上线地址"这一句，
   别把它删成光鲜的地址列表（`scripts/web-demo-test.js` 有断言拦着）。
+- 视图词那一排（about/summary/refs/log/tree/commit/diff/stats）与字段名（age/author/…）按
+  git.kernel.org 的习惯**保留英文**，不进翻译；给用户读的句子才进词条（`git.ui.*` 7 条 × 11 语言）。
 
 **手机端首屏（2026-09-29 修"手机上加载不出来/资源太慢"）**：慢的不是我们的代码，是
 **字体表挡住了首次绘制**。实测 zeoseven 那两份 `result.css`：`198` = 140 KB（br 后 **47.7 KB**、
@@ -440,7 +474,7 @@ https://git.os.parlz.com/parlz.git      ← 子域入口
   慢网络上"读不到内容"比"闪一下中文"严重得多。
 - 翻页与取 `feed/Packages` 的 `fetch` 缓存策略按域名分：只有本地预览（localhost / 127. / `[::1]` /
   10.0.2.）用 `no-cache`，线上走浏览器缓存 —— 线上每翻一页都回源等于白送一趟往返。
-- `web/feed/*.pm`（core 44 MB、pm 7.6 MB、gcc 455 MB、clang 967 MB）与 `web/rootfs/`（45 MB）
+- `web/feed/*.pm`（core 43.7 MB、pm 7.6 MB、gcc 591.8 MB、clang 1074.9 MB）与 `web/rootfs/`（45 MB）
   都是**按需**取的，不进首屏；手机上跑 `pm install core` / `sha256sum /bin/pms` 要下真字节，
   慢网络会等一会儿，这是"演示真装包"的代价，不是加载失败。
 - **验证提醒**：别在隐藏标签页里判断动画有没有跑 —— Chrome 对隐藏页的深层 `setTimeout` 链做
@@ -473,7 +507,7 @@ wsl -d Ubuntu-24.04 -u root -e bash -c "cd /mnt/f/Linux/Parlz/web && python3 -m 
 # 浏览器开 http://localhost:4173/
 ```
 
-注意：`web/downloads/` 的 151 MiB / 512 MiB 与 `gcc.pm`(455 M)/`clang.pm`(967 M)
+注意：`web/downloads/` 的 151 MiB / 512 MiB 与 `gcc.pm`(564 M)/`clang.pm`(1025 M)
 都超过 Qoder Sites 的单文件上限（50 MiB），**这份站只适合本地/自建服务器**；
 真要发到托管平台，这些大文件得换外链。
 
@@ -502,4 +536,16 @@ GCC 15 工具链的三个必踩陷阱、以及 ext2 超级块/组描述符的精
 
 ## 许可
 
-内核部分沿用 Linux 的 GPL-2.0。Parlz 自有代码同样以 GPL-2.0 发布。
+授权是**分层**的，逐件清单见 [LICENSE](LICENSE)：
+
+| 部分 | 许可证 |
+|---|---|
+| `linux-7.2.5/` 整树（**含** Parlz 加进内核的标识层、`setup.ld` 修复、defconfig 等） | GNU GPL-2.0-only（不能被重新授权） |
+| Parlz 自有的用户空间 / 脚本 / 官网 / 文档 | [PARLZ.LICENSE](PARLZ.LICENSE) Version 1.7 |
+| 上游组件（BusyBox、SYSLINUX、bash、nano、wget、glibc、OpenSSL、curl、miniz、GCC、LLVM…） | 各自原许可证 |
+
+分发 ISO / IMG 即分发内核目标代码，所以介质上带着许可证全文：引导分区
+`LICENSE.TXT` + `COPYING.TXT`（GPLv2 全文）、已安装根 `/usr/share/licenses/<组件>/`、
+根目录 `/LICENSE.TXT`，`/etc/parlz-release` 里另有 `license:` / `license-dir:` /
+`source-url:` 三行。文本由 `scripts/vendor-licenses.sh` 一次性收进
+`third_party/licenses/`（不依赖构建机的 `/usr/share/common-licenses`）。

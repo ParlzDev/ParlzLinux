@@ -1,0 +1,32 @@
+ParlzOS — 授权说明（介质副本 / on-media notice）
+
+本介质（引导分区 / ISO / 已安装磁盘）上的 `vmlinuz` 是**改过的 Linux 内核**。
+授权分三层，不可一刀切：
+
+  1) 内核部分（`linux-7.2.5/` 整树，含 Parlz 自己加进内核的
+     `include/linux/parlz.h`、`arch/x86/kernel/parlz.c`、`init/main.c` 的
+     一行钩子、`arch/x86/boot/setup.ld` 的填充修复、`parlz_defconfig` 等）
+        → GNU GPL-2.0-only（不含 later 选项）
+        → 全文：本介质 `COPYING.TXT`；已安装根 `/usr/share/licenses/linux-kernel/COPYING`
+
+  2) Parlz 自有代码（用户空间、构建脚本、官网、文档）
+        → PARLZ.LICENSE Version 1.7
+        → 全文：已安装根 `/usr/share/licenses/parlz/PARLZ.LICENSE`
+        → 商标：该许可证第 5 条，不授予名称/标识使用权
+
+  3) 上游组件（BusyBox、SYSLINUX = GPL-2.0；bash、nano、wget = GPL-3.0；
+     glibc、libxcrypt = LGPL-2.1；OpenSSL = Apache-2.0；curl = 自有许可；
+     miniz = MIT 风格）
+        → 各自的原许可证，PARLZ.LICENSE 不覆盖它们
+        → 全文：已安装根 `/usr/share/licenses/<组件>/`，索引见同目录 README
+
+分层授权的完整说明：`/usr/share/licenses/parlz/LICENSE`（仓库根 `LICENSE`）。
+
+源码义务（GPLv2 §3 / LGPL-2.1 §6）
+    分发本介质 = 分发内核目标代码与静态链接的用户空间二进制，
+    必须能提供**完整对应源码**（含对内核的修改）与可重链接材料：
+
+        源码：https://www.parlz.com/git
+        发布号：`cat /etc/parlz-release`（与 `uname -r`、`/proc/version` 同源）
+
+若本说明与某个具体文件头部的 SPDX 标识不一致，以文件头部标识为准。

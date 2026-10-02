@@ -15,6 +15,9 @@
 !/README.md
 !/AGENTS.md
 !/STATUS.md
+# 授权文本必须进仓库: 交付盘与官网都引用它们, 漏在 git 外等于"源码里没有许可证"
+!/LICENSE
+!/PARLZ.LICENSE
 !/.parlz-release
 !/.parlz-release-ntclks
 !/.pm-release
@@ -37,6 +40,12 @@
 !/vendor/
 
 # 3) 放行目录里再挖掉不该进的
+# distfiles 里只留"构建真正要用"的那份上游包 + 校验和;
+# .part 是断点续传的半成品, mirror/tuna 是同一份包的换源副本 ——
+# 它们是下载调试的残留, 不该进公开仓库(要复现构建只需要 canonical 那一份)。
+/third_party/distfiles/*.part
+/third_party/distfiles/*.mirror.*
+/third_party/distfiles/*.tuna.*
 # pm 镜像站的分发物（1.5 GB 的 .pm）：走下载不走 git
 /web/feed/
 # 演示用的真 ELF 字节

@@ -54,6 +54,13 @@ for d in /usr/include/c++/*;    do [ -d "$d" ] && CXXI="$d"; done
 LDP="/lib/toolchain"
 [ -n "$TCG" ] && LDP="$LDP:$TCG/lib"
 [ -n "$TCL" ] && LDP="$LDP:$TCL/lib"
+# ★ 这三行是**兜底**, 不是动态编译成立的条件。包内(build-toolchain.sh 的
+#   dev 名字层 + build-pm-packages.sh 的三棵多架构软链树)已经把
+#   libc.so/libm.so/libstdc++.so/libgcc_s.so 与 /usr/lib/x86_64-linux-gnu、
+#   /lib/x86_64-linux-gnu、/lib 都铺好了, 所以不设这些变量也应该能
+#   编译并跑起动态产物 —— 判据见 scripts/toolchain-dyn-verify.sh
+#   (chroot + env -i, 显式断这三个变量为空)。
+#   留着是为了喂给老镜像里装上去的旧包, 别拿它当"已经修好了"的证据。
 export LD_LIBRARY_PATH="$LDP"
 export LIBRARY_PATH=/lib/toolchain:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu
 CP=""
@@ -281,10 +288,35 @@ else
 fi
 
 # --- 自测钩子(验证脚本注入, 缺失静默跳过) ---
+# ★ tooltest/pmtest 必须**自动跑**: 这两条的验收脚本(scripts/toolchain-verify.sh
+#   / scripts/pm-verify.sh)只 grep "TC_ALL_OK"/"PM_ALL_OK" 与 "finished"。
+#   以前这里只打 "present (run manually)" —— 那是 init.c 时代的残留:
+#   正常启动早已是 busybox-init + body(内核默认走 /sbin/init, 见
+#   AGENTS/CONFIG), init.c 里那两个钩子根本不会被执行, 于是验收脚本
+#   白等到超时, 报出来的 FAIL 与产品无关(实测: pm-verify 等 27 分钟零输出)。
+#   看门狗用 `kill -0` 轮询 + busybox sleep(不依赖 timeout applet, 它可能被裁)。
+run_hook(){ # $1=脚本 $2=秒数上限
+    [ -x "$1" ] || return 0
+    echo "init: running $1 ($2s 看门狗)"
+    /bin/bash "$1" &
+    _hp=$!
+    _n=0
+    while kill -0 "$_hp" 2>/dev/null; do
+        _n=$((_n + 1))
+        if [ "$_n" -gt "$2" ]; then
+            echo "init: $1 超时(${2}s), kill"
+            kill -9 "$_hp" 2>/dev/null
+            break
+        fi
+        /bin/busybox sleep 1
+    done
+    wait "$_hp" 2>/dev/null
+    echo "init: ${1##*/} finished (status $?)"
+}
+run_hook /tooltest.sh 900        # 工具链在 rootfs 里(自带工具链的构建)
+run_hook /pmtest.sh 1500         # 要先 pm install 工具链: GB 级下载 + 12 条编译
 [ -x /nettest.sh ]    && echo "init: /nettest.sh present (run manually)"
 [ -x /audiotest.sh ]  && echo "init: /audiotest.sh present (run manually)"
-[ -x /tooltest.sh ]   && echo "init: /tooltest.sh present (run manually)"
-[ -x /pmtest.sh ]     && echo "init: /pmtest.sh present (run manually)"
 
 cd /root 2>/dev/null
 

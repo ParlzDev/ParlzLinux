@@ -470,10 +470,13 @@ int main(void)
     }
 
     /* pm 包管理器自测钩子: 若 /pmtest.sh 存在(pm-verify.sh 注入的构建带),
-     * fork 跑它 —— guest 内 pm install gcc/clang + 编译运行 + pm list +
-     * nano terminfo 验收。下载工具链包较慢, 240s 看门狗。 */
+     * fork 跑它 —— guest 内 pm install gcc/clang + 裸命令动态编译运行 +
+     * pm list + nano terminfo 验收。
+     * 看门狗 1500s: 工具链包已到 GB 级(gcc 546 MiB + clang 1017 MiB), 走的
+     * 还是模拟 user-NAT + 解 cpio 进 ramfs, 240s 是包还只有几十 MB 时代的值
+     * —— 超时就 kill, 判据会报成"产品失败", 其实是没给够时间(以前踩过)。 */
     if (access("/pmtest.sh", X_OK) == 0) {
-        printf("init: running /pmtest.sh (240s 看门狗)\n");
+        printf("init: running /pmtest.sh (1500s 看门狗)\n");
         fflush(stdout);
         pid_t ppid = fork();
         if (ppid == 0) {
@@ -482,7 +485,7 @@ int main(void)
         }
         int p_wait = 0;
         int pst = 0;
-        for (int s = 0; s < 240; s++) {
+        for (int s = 0; s < 1500; s++) {
             int r = waitpid(ppid, &pst, WNOHANG);
             if (r == ppid) {
                 p_wait = 1;

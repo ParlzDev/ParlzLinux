@@ -22,11 +22,76 @@ const PMVER = "pm+1.1-RC+1";
 const PARLZ_RELEASE = [
   "name: ParlzOS", "version: " + REL, "semver: 0.1.0", "stage: rc",
   "builder: jgzyes@parlz.com", "build-tz: CST+0800", "build-time: 20260927-190002",
-  "kernel-release: " + UTS, "",
+  "kernel-release: 7.2.5-" + REL,
+  // 下面三行是真机 /etc/parlz-release 里新增的授权与源码地址字段
+  // (build-userland.sh 写盘), 演示站必须逐行跟着真机, 不然"与真机同内容"是假的。
+  "license: mixed (kernel=GPL-2.0-only, parlz=PARLZ.LICENSE, upstream=各自; 见 /usr/share/licenses)",
+  "license-dir: /usr/share/licenses",
+  "source-url: https://www.parlz.com/git",
+  "",
 ].join("\n");
-const PROC_VERSION = "Linux version " + UTS + " (jgzyes@parlz.com) " +
-  "(gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, GNU ld (GNU Binutils for Ubuntu) 2.42) " +
+// 交付介质上的"授权说明"副本 —— 与仓库里 third_party/licenses/
+// PARLZ-MEDIA-LICENSE.txt 逐字相同（web-demo-test.js 有一条判据专门比这个，
+// 防止演示里贴了一份旧文本）。真机上它同时出现在: 引导分区 LICENSE.TXT、
+// ISO 根、已安装根 /LICENSE.TXT（同一份文件由 build-userland.sh 烘进 rootfs）。
+const MEDIA_LICENSE = [
+  "ParlzOS — 授权说明（介质副本 / on-media notice）",
+  "",
+  "本介质（引导分区 / ISO / 已安装磁盘）上的 `vmlinuz` 是**改过的 Linux 内核**。",
+  "授权分三层，不可一刀切：",
+  "",
+  "  1) 内核部分（`linux-7.2.5/` 整树，含 Parlz 自己加进内核的",
+  "     `include/linux/parlz.h`、`arch/x86/kernel/parlz.c`、`init/main.c` 的",
+  "     一行钩子、`arch/x86/boot/setup.ld` 的填充修复、`parlz_defconfig` 等）",
+  "        → GNU GPL-2.0-only（不含 later 选项）",
+  "        → 全文：本介质 `COPYING.TXT`；已安装根 `/usr/share/licenses/linux-kernel/COPYING`",
+  "",
+  "  2) Parlz 自有代码（用户空间、构建脚本、官网、文档）",
+  "        → PARLZ.LICENSE Version 1.7",
+  "        → 全文：已安装根 `/usr/share/licenses/parlz/PARLZ.LICENSE`",
+  "        → 商标：该许可证第 5 条，不授予名称/标识使用权",
+  "",
+  "  3) 上游组件（BusyBox、SYSLINUX = GPL-2.0；bash、nano、wget = GPL-3.0；",
+  "     glibc、libxcrypt = LGPL-2.1；OpenSSL = Apache-2.0；curl = 自有许可；",
+  "     miniz = MIT 风格）",
+  "        → 各自的原许可证，PARLZ.LICENSE 不覆盖它们",
+  "        → 全文：已安装根 `/usr/share/licenses/<组件>/`，索引见同目录 README",
+  "",
+  "分层授权的完整说明：`/usr/share/licenses/parlz/LICENSE`（仓库根 `LICENSE`）。",
+  "",
+  "源码义务（GPLv2 §3 / LGPL-2.1 §6）",
+  "    分发本介质 = 分发内核目标代码与静态链接的用户空间二进制，",
+  "    必须能提供**完整对应源码**（含对内核的修改）与可重链接材料：",
+  "",
+  "        源码：https://www.parlz.com/git",
+  "        发布号：`cat /etc/parlz-release`（与 `uname -r`、`/proc/version` 同源）",
+  "",
+  "若本说明与某个具体文件头部的 SPDX 标识不一致，以文件头部标识为准。",
+  "",
+].join("\n");
+const PROC_VERSION = "Linux version " + UTS + " (jgzyes@parlz.com) " +  "(gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, GNU ld (GNU Binutils for Ubuntu) 2.42) " +
   "#51 SMP PREEMPT_DYNAMIC Sun Sep 27 19:00:02 CST 2026";
+// 交付盘 /usr/share/licenses 的真清单: [组件目录, 文件名, 字节数]。
+// 名字与字节数取自仓库里的实际文件(third_party/licenses/<组件>/ + 仓库根的
+// PARLZ.LICENSE/LICENSE), 由 scripts/web-demo-test.js 逐条核对 —— 演示里
+// `ls -l /usr/share/licenses/linux-kernel` 打出的尺寸必须是真机的尺寸。
+// 内容不外联(data=null): `cat` 它们时演示会如实说明"没有实体字节"。
+const LICENSES = [
+  ["linux-kernel", "COPYING", 18092],
+  ["busybox", "COPYING", 18092],
+  ["syslinux", "COPYING", 18092],
+  ["bash", "COPYING", 35149],
+  ["nano", "COPYING", 35149],
+  ["wget", "COPYING", 35149],
+  ["glibc", "COPYING.LIB", 26530],
+  ["openssl", "LICENSE.txt", 11358],
+  ["curl", "COPYRIGHT", 21749],
+  ["miniz", "LICENSE", 1380],
+  ["parlz", "PARLZ.LICENSE", 44646],
+  ["parlz", "LICENSE", 4942],
+];
+const LICENSES_README_SIZE = 1296;      // third_party/licenses/README
+const MEDIA_LICENSE_SIZE = 1772;        // PARLZ-MEDIA-LICENSE.txt = 盘上 /LICENSE.TXT
 const RESOLV = "nameserver 10.0.2.3\nnameserver 8.8.8.8\nnameserver 1.1.1.1\noptions timeout:1 attempts:1\n";
 const FEEDS_DEFAULT = "http://www.parlz.com/feed";
 const PASSWD = "root:x:0:0:root:/root:/bin/bash\n";
@@ -42,13 +107,13 @@ const PARLZ_BANNER = "ParlzOS rc.0.1 — Linux 7.2.5 就地改造\n";
 const BUSYBOX_SIZE = 2501752;
 const NET_ADDR = "10.0.2.15", NET_GW = "10.0.2.2", NET_MASK = "255.255.255.0", NET_DNS = "10.0.2.3";
 
-// 真机 /bin（77 项）与 /usr/bin（14 项）：[名字, 类型, 字节数, 软链目标]
+// 真机 /bin（79 项）与 /usr/bin（14 项）：[名字, 类型, 字节数, 软链目标]
 const REAL_BIN = [
-  ["ash","l",15,"../sbin/busybox"], ["bash","f",2653248], ["busybox","l",15,"../sbin/busybox"],
+  ["ash","l",15,"../sbin/busybox"], ["apt","f",7625568], ["bash","f",2653248], ["busybox","l",15,"../sbin/busybox"],
   ["cat","f",820624], ["chgrp","l",15,"../sbin/busybox"], ["chmod","f",789832],
   ["chown","l",15,"../sbin/busybox"], ["clear","l",8,"parlz-sh"], ["cp","f",820464],
   ["cpfs","f",834368], ["crond","l",15,"../sbin/busybox"], ["date","l",15,"../sbin/busybox"],
-  ["dd","l",15,"../sbin/busybox"], ["depmod","l",15,"../sbin/busybox"], ["df","f",951360],
+  ["dd","l",15,"../sbin/busybox"], ["depmod","l",15,"../sbin/busybox"], ["df","f",951360], ["dpkg","f",874776],
   ["du","l",15,"../sbin/busybox"], ["echo","l",15,"../sbin/busybox"], ["env","l",15,"../sbin/busybox"],
   ["find","l",15,"../sbin/busybox"], ["frpc","f",1062392], ["getty","l",15,"../sbin/busybox"],
   ["grep","f",820816], ["halt","l",15,"../sbin/busybox"], ["hostname","l",15,"../sbin/busybox"],
@@ -59,17 +124,17 @@ const REAL_BIN = [
   ["login","f",1035048], ["ls","l",15,"../sbin/busybox"], ["mkdir","f",820592],
   ["mkfifo","l",15,"../sbin/busybox"], ["mknod","f",820696], ["mktemp","l",15,"../sbin/busybox"],
   ["modprobe","l",15,"../sbin/busybox"], ["mount","f",789792], ["mv","f",820808],
-  ["openvpn","f",1062096], ["opkg","f",785584], ["opkg-native","f",2374256],
+  ["openvpn","f",1062096],
   ["parlz-sh","f",1049848], ["pivot_root","l",15,"../sbin/busybox"], ["pm","f",7576952],
   ["pms","f",799072], ["poweroff","l",15,"../sbin/busybox"], ["printf","l",15,"../sbin/busybox"],
   ["ps","f",820872], ["readlink","l",15,"../sbin/busybox"], ["realpath","l",15,"../sbin/busybox"],
   ["reboot","l",15,"../sbin/busybox"], ["rm","f",820752], ["rmdir","l",15,"../sbin/busybox"],
-  ["rmmod","l",15,"../sbin/busybox"], ["route","l",15,"../sbin/busybox"], ["sed","f",820592],
+  ["rmmod","l",15,"../sbin/busybox"], ["route","l",15,"../sbin/busybox"], ["rpm","f",853568], ["sed","f",820592],
   ["sh","f",785528], ["sleep","l",15,"../sbin/busybox"], ["stty","l",15,"../sbin/busybox"],
   ["su","l",15,"../sbin/busybox"], ["switch_root","l",15,"../sbin/busybox"], ["test","l",15,"../sbin/busybox"],
   ["time","l",15,"../sbin/busybox"], ["touch","l",15,"../sbin/busybox"], ["udhcpc","l",15,"../sbin/busybox"],
   ["umount","f",820584], ["uname","l",15,"../sbin/busybox"], ["user","f",1035120],
-  ["which","f",785504], ["whoami","l",15,"../sbin/busybox"],
+  ["which","f",785504], ["whoami","l",15,"../sbin/busybox"], ["yum","f",7625984],
 ];
 const REAL_USRBIN = ["add-shell","addgroup","adduser","busybox","chroot","lsmod","mdev","pwd",
   "setsid","sha384sum","sha3sum","sha512sum","sync","users"].map((n) => [n, "l", 13, "/sbin/busybox"]);
@@ -1436,8 +1501,7 @@ CMD.install = (ctx, argv, io) => {
 CMD.mkfs = (ctx, argv, io) => { emit(io, "mkfs: 演示环境不格式化磁盘（真机 /bin/mkfs 自写 ext2）。"); return 0; };
 CMD.login = (ctx, argv, io) => { emit(io, "login: 演示里已经以 " + ctx.env.USER + " 登录（真机走 /etc/parlz-auth）。"); return 0; };
 CMD.user = (ctx, argv, io) => { emit(io, "user: 演示不提供账户管理（真机 /bin/user add/rm/upd）。"); return 0; };
-CMD.opkg = (ctx, argv, io) => { emit(io, "opkg: 演示里请用 pm（真机 /bin/opkg 是移植的上游 0.8.0）。"); return 0; };
-CMD.ppm = (ctx, argv, io) => { emit(io, "ppm: 演示里请用 pm（真机 /bin/ppm 委托 opkg 后端）。"); return 0; };
+// dpkg/rpm/apt/yum 四个包管理器的演示实现在下面 pkgFrontend 那一组（读同一份 feed 数据）
 CMD.audio = (ctx, argv, io) => { emit(io, "audio: 演示环境没有 ALSA（真机 /bin/audio 走 /dev/snd）。"); return 0; };
 CMD.pweb = (ctx, argv, io) => { emit(io, "pweb: 真机 /bin/pweb 是自研 C 静态服务器 —— 这个站就是它这一类服务器伺服的。"); return 0; };
 CMD.cpfs = (ctx, argv, io) => { emit(io, "cpfs: 递归拷贝当前根到目标分区（真机装盘第 3b 步）。"); return 0; };
@@ -2171,15 +2235,39 @@ CMD.pms = (ctx, argv, io) => {
   return 1;
 };
 
-CMD.opkg = async (ctx, argv, io) => {
-  const sub = argv[1];
-  if (sub === "--version" || sub === "version") { emit(io, "opkg 0.8.0 (ParlzOS 移植版)"); return 0; }
-  if (sub === "update" || sub === "list" || sub === "available") { return ctx.sys.cmds.pm(ctx, ["pm", "available"], io); }
-  if (sub === "install") return ctx.sys.cmds.pm(ctx, ["pm", "install", argv[2]], io);
-  emit(io, "opkg: 演示里请直接用 pm（真机 opkg 是移植的上游 0.8.0，pm 兼容它的索引格式）");
-  return 0;
+// 四个包管理器在演示里都接同一份 feed 数据（真机上 dpkg/rpm/apt/yum 读的是
+// .deb/.rpm/Debian Packages/repodata，本站演示没有那些仓库）
+// 版本行逐字对齐真机 `<cmd> --version` 的第一行 —— 演示不许自己编一套版本号
+const PKG_VER_LINE = {
+  dpkg: "dpkg -Parlz/1.0.0 (基于 pkgcore 的移植实现)",
+  rpm: "RPM 包管理器(Parlz 移植实现) 1.0.0",
+  apt: "apt 1.0.0-parlz (Parlz 移植实现; 解包安装由 dpkg 完成)",
+  yum: "yum 1.0.0-parlz (Parlz 移植实现; 解包安装由 rpm 完成)",
 };
-CMD["opkg-native"] = CMD.opkg;
+
+async function pkgFrontend(ctx, argv, io, name, backend) {
+  const sub = argv[1];
+  if (sub === "--version" || sub === "version" || !sub) {
+    emit(io, PKG_VER_LINE[name]);
+    return 0;
+  }
+  if (sub === "update" || sub === "makecache" || sub === "list" ||
+      sub === "available" || sub === "search") {
+    emit(io, `（演示: ${name} ${sub} 没有真的 deb/rpm 仓库可读, 下面列的是官网 .pm 镜像站的内容）`);
+    return ctx.sys.cmds.pm(ctx, ["pm", "available"], io);
+  }
+  if (sub === "install") {
+    emit(io, `（演示: ${name} 装不了 .deb/.rpm —— 本站演示只有 .pm; 转交 pm）`);
+    return ctx.sys.cmds.pm(ctx, ["pm", "install", argv[2]], io);
+  }
+  emit(io, `${name}: 演示里请用 pm（真机 ${name} 是自己移植的实现, 包格式与索引沿用上游公开规范, 不链接上游代码）`);
+  return 0;
+}
+
+CMD.dpkg = (ctx, argv, io) => pkgFrontend(ctx, argv, io, "dpkg", "pkgcore");
+CMD.apt = (ctx, argv, io) => pkgFrontend(ctx, argv, io, "apt", "dpkg");
+CMD.rpm = (ctx, argv, io) => pkgFrontend(ctx, argv, io, "rpm", "pkgcore");
+CMD.yum = (ctx, argv, io) => pkgFrontend(ctx, argv, io, "yum", "rpm");
 
 CMD.user = (ctx, argv, io) => {
   const sub = argv[1], name = argv[2];
@@ -3416,18 +3504,26 @@ Bash.prototype.runTest2 = function (args, io) {
 /* ================= 系统封装：种子 rootfs + pm ================= */
 
 const PACKAGES = {
-  core:  { version: "0.1.0-rc", file: "core.pm",  size: 44484096 },
-  pm:    { version: "1.1-RC+1", file: "pm.pm",    size: 7578112 },
-  gcc:   { version: "13",       file: "gcc.pm",   size: 476792320 },
-  clang: { version: "18.1.3",   file: "clang.pm", size: 1013805056 },
+  // 四行全部对齐 output/feed/Packages 的真值(2026-10-01 重打包):
+  // gcc/clang 的版本列以前是 "13"/写死值, 真机 feed 修好 VERSIONS 之后
+  // 索引里就是 13.3.0 / 18.1.3 —— 演示站不许比真机更"含糊"。
+  core:  { version: "0.1.0-rc", file: "core.pm",  size: 43698176  },
+  pm:    { version: "1.1-RC+1", file: "pm.pm",    size: 7578112   },
+  gcc:   { version: "13.3.0",   file: "gcc.pm",   size: 591771136 },
+  clang: { version: "18.1.3",   file: "clang.pm", size: 1074919936 },
 };
 
 function seed(vfs) {
-  const dirs = ["bin","boot","dev","etc","etc/pm","etc/ssl","etc/ssl/certs","etc/opkg","mnt","proc",
+  const dirs = ["bin","boot","dev","etc","etc/apt","etc/pm","etc/ssl","etc/ssl/certs",
+                "etc/yum.repos.d","mnt","proc",
                 "root","sbin","sys","tmp","usr","usr/bin","usr/sbin","usr/local","usr/local/bin",
-                "usr/share","usr/share/licenses","usr/share/licenses/bash","usr/share/licenses/opkg",
-                "usr/share/terminfo","usr/share/opkg","var","var/lib","var/lib/opkg","parlz"];
+                "usr/share","usr/share/licenses",
+                "usr/share/terminfo","var","var/cache/apt/archives","var/cache/yum",
+                "var/lib","var/lib/apt/lists","var/lib/dpkg/info","var/lib/rpm/installed","parlz"];
   for (const d of dirs) vfs.mkdirp("/" + d);
+  // /usr/share/licenses/<组件>/<文件> —— 目录与条目都从 LICENSES 现推,
+  // 不再写死第二份名单(写死过一版: 真机加了 10 个组件, 演示还停在只有 bash)
+  vfs.mkdirp("/usr/share/licenses");
 
   // 真文件（非软链）挂 src：需要字节时由 sys.ensureData 去 web/rootfs/<src> 取真的 ELF
   const withSrc = (node, src) => Object.assign(node, { src });
@@ -3438,7 +3534,22 @@ function seed(vfs) {
     else vfs.add("/bin/" + name, withSrc(nFile(null, 0o755, size), "/bin/" + name));
   for (const [name, , , link] of REAL_USRBIN) vfs.symlink(link, "/usr/bin/" + name);
 
+  // /usr/share/licenses/<组件>/<文件> —— 目录与条目都从 LICENSES 现推, 不再写死
+  // 第二份名单(写死过一版: 真机加了 10 个组件, 演示还停在只有 bash)。
+  // 这些是纯文本, web/rootfs 里有实体字节(sync 脚本会带上), 所以挂 src 让
+  // `cat /usr/share/licenses/linux-kernel/COPYING` 在演示里也能真读出 GPLv2 全文。
+  vfs.mkdirp("/usr/share/licenses");
+  vfs.add("/usr/share/licenses/README",
+          withSrc(nFile(null, 0o644, LICENSES_README_SIZE), "/usr/share/licenses/README"));
+  for (const [comp, file, size] of LICENSES) {
+    const rel = "/usr/share/licenses/" + comp + "/" + file;
+    vfs.mkdirp("/usr/share/licenses/" + comp);
+    vfs.add(rel, withSrc(nFile(null, 0o644, size), rel));
+  }
+
   vfs.writeFile("/etc/parlz-release", PARLZ_RELEASE, 0o644);
+  // 介质上的授权说明(真机: 引导分区 LICENSE.TXT / ISO 根 / 已安装根 /LICENSE.TXT)
+  vfs.writeFile("/LICENSE.TXT", MEDIA_LICENSE, 0o644);
   vfs.writeFile("/etc/resolv.conf", RESOLV, 0o644);
   vfs.writeFile("/etc/passwd", PASSWD, 0o644);
   vfs.writeFile("/etc/group", GROUP, 0o644);

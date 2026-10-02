@@ -76,11 +76,20 @@ add_executable(df      df.c)
 add_executable(ln      ln.c)
 add_executable(mv      mv.c)
 add_executable(tree    tree.c)
-# --- PPM 包管理器(.ppm = newc cpio)---
-add_executable(ppm     ppm.c)
-# --- OPKG 包管理器(.ipk = tar 外层含 control.tar.gz + data.tar.gz,
-#     DEFLATE 解压用 miniz_tinfl.c 的 tinfl)---
-add_executable(opkg    opkg.c miniz_tinfl.c)
+# --- 包管理器四件套(2026-09-30: 移除上游 OPKG, 改成我们自己移植) ---
+# pkgcore.c 是共用的容器/落盘/校验原语: ar + ustar/GNU/pax tar + newc cpio
+# + gzip(miniz tinfl) + 安全落盘(拒绝 .. 逃逸、先 unlink 再建、显式 chmod)
+# + Debian/RPM 两套版本比较 + SHA-256(核对索引声明的摘要)。
+#   dpkg  .deb = ar(debian-binary + control.tar + data.tar), 状态库 /var/lib/dpkg
+#   rpm   .rpm = lead + 签名 header + 主 header + cpio 负载, 状态库 /var/lib/rpm
+#   apt   高层前端: sources.list + Debian Packages 索引 + 依赖求解, 落盘调 dpkg
+#   yum   高层前端: repomd.xml + primary.xml + 依赖求解, 落盘调 rpm
+# 都不做 GPG 验签(明说), 取而代之: 未标 trusted/gpgcheck=0 的源一律拒绝安装,
+# 下载后按索引声明的 Size + SHA256 核对, 不符就删缓存不交给底层。
+add_executable(dpkg  dpkg.c  pkgcore.c miniz_tinfl.c)
+add_executable(rpm   rpm.c   pkgcore.c miniz_tinfl.c)
+add_executable(apt   apt.c   pkgcore.c miniz_tinfl.c http_client.c)
+add_executable(yum   yum.c   pkgcore.c miniz_tinfl.c http_client.c)
 # --- 网络工具(ping/wget)---
 add_executable(ping    ping.c)
 add_executable(wget    wget.c http_client.c)
@@ -132,6 +141,12 @@ if(PARLZ_HAVE_OPENSSL)
   target_include_directories(pm PRIVATE ${PARLZ_OPENSSL_PREFIX}/include)
   target_link_libraries(pm PRIVATE ${PARLZ_OPENSSL_PREFIX}/lib/libssl.a ${PARLZ_OPENSSL_PREFIX}/lib/libcrypto.a)
   target_compile_definitions(pm PRIVATE PARLZ_HAVE_OPENSSL=1)
+  # apt/yum: 同样走 http_client, 没 TLS 就只能配 http:// 的源
+  foreach(t apt yum)
+    target_include_directories(${t} PRIVATE ${PARLZ_OPENSSL_PREFIX}/include)
+    target_link_libraries(${t} PRIVATE ${PARLZ_OPENSSL_PREFIX}/lib/libssl.a ${PARLZ_OPENSSL_PREFIX}/lib/libcrypto.a)
+    target_compile_definitions(${t} PRIVATE PARLZ_HAVE_OPENSSL=1)
+  endforeach()
 endif()
 # 让 install 命令名也能用
 add_custom_command(TARGET parlz-install POST_BUILD

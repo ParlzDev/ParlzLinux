@@ -59,8 +59,10 @@ check "GLOBQ=0"                bash [[ ]] 通配匹配
 check "PROC_OK"                bash 进程替换
 check "mode of '/tmp/perm.txt': 0644 -> 0000" "chmod 000 生效（root 仍可读）"
 check "CHMOD_RESTORE_OK"       chmod 644 恢复读取
-check "opkg version 0.8.0"     opkg 真实后端
-check "opkg version 0.8.0"     ppm→opkg 委托
+check "dpkg -Parlz/1.0.0"      dpkg 移植实现自报家门
+check "RPM 包管理器(Parlz 移植实现)" rpm 移植实现自报家门
+check "apt 1.0.0-parlz"        apt 前端自报家门
+check "yum 1.0.0-parlz"        yum 前端自报家门
 check "HTTP_OK"                curl HTTP 明文
 check "HTTPS_OK"               curl HTTPS/PazeSSL
 check "WGET_OK"                wget HTTP
