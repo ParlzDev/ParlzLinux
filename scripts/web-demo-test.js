@@ -1038,7 +1038,14 @@ async function run(line) {
       if (!node || node.size !== size) licBad += "演示里 " + comp + "/" + file + " 尺寸不对; ";
     }
     check("授权: 演示的 /usr/share/licenses 条目(名字+字节)与仓库真文件逐条一致",
-          licRows.length === 12 && licBad === "", licBad || "只解析到 " + licRows.length + " 条");
+          licRows.length === 13 && licBad === "", licBad || "只解析到 " + licRows.length + " 条");
+    // 用户明确要求: LICENSE 就是许可证正文本身, 不许换成"我写的一份摘要"。
+    // 所以断**逐字相同**, 而不是"内容差不多"。摘要那份是 LICENSES.md。
+    check("授权: LICENSE 就是 PARLZ.LICENSE 的逐字副本(正文不是另写的一份)",
+          fs.readFileSync(path.join(ROOTDIR, "LICENSE"), "utf8") ===
+          fs.readFileSync(path.join(ROOTDIR, "PARLZ.LICENSE"), "utf8"));
+    check("授权: 分层说明在 LICENSES.md 里(内核 GPL-2.0-only / 自有 PARLZ.LICENSE)",
+          /GPL-2\.0-only/.test(fs.readFileSync(path.join(ROOTDIR, "LICENSES.md"), "utf8")));
     // 尺寸一律按**字节**比: 文本里有中文, `String.length` 是 UTF-16 码元数
     // (media.length=1130) 而盘上是 UTF-8 字节数(1772) —— 直接比 length 会假红。
     check("授权: /usr/share/licenses/README 与 /LICENSE.TXT 的字节数也对得上",
@@ -1073,8 +1080,10 @@ async function run(line) {
     check("授权: 引导分区也放 LICENSE.TXT + COPYING.TXT 并有挂载复核",
           /::\/LICENSE\.TXT/.test(gf) && /::\/COPYING\.TXT/.test(gf) && /COPYING\.TXT.*GPL|GPLv2 全文/.test(gf));
 
-    check("授权: 仓库根 LICENSE 说明分层(内核 GPL-2.0-only / Parlz 自有 PARLZ.LICENSE)",
-          /GPL-2\.0-only/.test(licTop) && /PARLZ\.LICENSE/.test(licTop) && /linux-7\.2\.5/.test(licTop));
+    check("授权: 分层说明在 LICENSES.md(内核 GPL-2.0-only / 自有 PARLZ.LICENSE / 上游逐件)",
+          /GPL-2\.0-only/.test(fs.readFileSync(path.join(ROOTDIR, "LICENSES.md"), "utf8")) &&
+          /PARLZ\.LICENSE/.test(fs.readFileSync(path.join(ROOTDIR, "LICENSES.md"), "utf8")) &&
+          /linux-7\.2\.5/.test(fs.readFileSync(path.join(ROOTDIR, "LICENSES.md"), "utf8")));
     // 中英两份都要有范围排除与 GPLv2-only 条款(只改一边就是"说了等于没做")
     for (const tag of ["1.1.1", "12.2.1", "12.3.1"]) {
       const n = (parlzLic.match(new RegExp(tag, "g")) || []).length;
@@ -1090,12 +1099,22 @@ async function run(line) {
       return !/SPDX-License-Identifier:\s*GPL-2\.0/.test(fs.readFileSync(p, "utf8"));
     });
     check("授权: 内核里的 Parlz 自有文件仍标 SPDX GPL-2.0(不能被重新授权)", kidBad.length === 0, kidBad.join(" "));
+    // 演示里的授权字面量由 scripts/sync-license-literals.js 从真文件生成。
+    // 这条判据跑它的 --check: 有人改了 PARLZ.LICENSE/介质说明而忘了同步, 这里就红。
+    const syncOut = require("child_process")
+      .spawnSync(process.execPath, [path.join(__dirname, "sync-license-literals.js"), "--check"],
+                 { cwd: ROOTDIR, encoding: "utf8" });
+    check("授权: 演示里的授权字面量与仓库真文件同步(--check 干净)",
+          syncOut.status === 0, (syncOut.stdout || syncOut.stderr || "").trim().slice(0, 120));
     // .gitignore 是**白名单**: 根下的文件不在名单里就永远进不了仓库。
     // 实测踩过: PARLZ.LICENSE/LICENSE 没被放行, git status 连 `??` 都不给,
     // 于是"源码仓库里没有许可证文本"这件事毫无征兆。
     const ign2 = fs.readFileSync(path.join(ROOTDIR, ".gitignore"), "utf8");
-    check("授权: 两份许可证文本在 .gitignore 白名单里(不然仓库里根本没有它们)",
-          /^!\/LICENSE$/m.test(ign2) && /^!\/PARLZ\.LICENSE$/m.test(ign2));
+    check("授权: 三份授权文件都在 .gitignore 白名单里(不然仓库里根本没有它们)",
+          /^!\/LICENSE$/m.test(ign2) && /^!\/PARLZ\.LICENSE$/m.test(ign2) &&
+          /^!\/LICENSES\.md$/m.test(ign2),
+          ["!/LICENSE", "!/PARLZ.LICENSE", "!/LICENSES.md"]
+            .filter((r) => !new RegExp("^" + r.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$", "m").test(ign2)).join(" "));
   }
 
   console.log("\n" + (fail ? "FAILED" : "ALL PASS") + ": " + pass + " passed, " + fail + " failed");

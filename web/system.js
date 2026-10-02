@@ -47,7 +47,7 @@ const MEDIA_LICENSE = [
   "        → 全文：本介质 `COPYING.TXT`；已安装根 `/usr/share/licenses/linux-kernel/COPYING`",
   "",
   "  2) Parlz 自有代码（用户空间、构建脚本、官网、文档）",
-  "        → PARLZ.LICENSE Version 1.7",
+  "        → PARLZ.LICENSE Version 1.7（许可证正文即仓库根的 LICENSE，两者逐字相同）",
   "        → 全文：已安装根 `/usr/share/licenses/parlz/PARLZ.LICENSE`",
   "        → 商标：该许可证第 5 条，不授予名称/标识使用权",
   "",
@@ -57,7 +57,7 @@ const MEDIA_LICENSE = [
   "        → 各自的原许可证，PARLZ.LICENSE 不覆盖它们",
   "        → 全文：已安装根 `/usr/share/licenses/<组件>/`，索引见同目录 README",
   "",
-  "分层授权的完整说明：`/usr/share/licenses/parlz/LICENSE`（仓库根 `LICENSE`）。",
+  "分层授权的完整说明：`/usr/share/licenses/parlz/LICENSES.md`（仓库根 `LICENSES.md`）。",
   "",
   "源码义务（GPLv2 §3 / LGPL-2.1 §6）",
   "    分发本介质 = 分发内核目标代码与静态链接的用户空间二进制，",
@@ -77,21 +77,22 @@ const PROC_VERSION = "Linux version " + UTS + " (jgzyes@parlz.com) " +  "(gcc (U
 // `ls -l /usr/share/licenses/linux-kernel` 打出的尺寸必须是真机的尺寸。
 // 内容不外联(data=null): `cat` 它们时演示会如实说明"没有实体字节"。
 const LICENSES = [
-  ["linux-kernel", "COPYING", 18092],
+  ["bash", "COPYING", 35147],
   ["busybox", "COPYING", 18092],
-  ["syslinux", "COPYING", 18092],
-  ["bash", "COPYING", 35149],
-  ["nano", "COPYING", 35149],
-  ["wget", "COPYING", 35149],
-  ["glibc", "COPYING.LIB", 26530],
-  ["openssl", "LICENSE.txt", 11358],
   ["curl", "COPYRIGHT", 21749],
+  ["glibc", "COPYING.LIB", 26530],
+  ["linux-kernel", "COPYING", 18092],
   ["miniz", "LICENSE", 1380],
+  ["nano", "COPYING", 35149],
+  ["openssl", "LICENSE.txt", 11358],
+  ["parlz", "LICENSE", 44646],
+  ["parlz", "LICENSES.md", 5124],
   ["parlz", "PARLZ.LICENSE", 44646],
-  ["parlz", "LICENSE", 4942],
+  ["syslinux", "COPYING", 18092],
+  ["wget", "COPYING", 35149],
 ];
 const LICENSES_README_SIZE = 1296;      // third_party/licenses/README
-const MEDIA_LICENSE_SIZE = 1772;        // PARLZ-MEDIA-LICENSE.txt = 盘上 /LICENSE.TXT
+const MEDIA_LICENSE_SIZE = 1845;        // PARLZ-MEDIA-LICENSE.txt = 盘上 /LICENSE.TXT
 const RESOLV = "nameserver 10.0.2.3\nnameserver 8.8.8.8\nnameserver 1.1.1.1\noptions timeout:1 attempts:1\n";
 const FEEDS_DEFAULT = "http://www.parlz.com/feed";
 const PASSWD = "root:x:0:0:root:/root:/bin/bash\n";

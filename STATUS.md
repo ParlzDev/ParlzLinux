@@ -21,8 +21,8 @@
 
 | 事 | 落点 |
 |---|---|
-| (a) 文本进盘 | 引导分区 `LICENSE.TXT` + `COPYING.TXT`(GPLv2 全文)；rootfs `/usr/share/licenses/<组件>/` 十一个目录 + `README` 索引 + `parlz/{PARLZ.LICENSE,LICENSE}`；根 `/LICENSE.TXT`（ISO 根与已安装根同源）；`/etc/parlz-release` 加 `license:` / `license-dir:` / `source-url:` |
-| (b) 分层说明 | 仓库根新增 `LICENSE`：内核 GPL-2.0-only / 自有部分 PARLZ.LICENSE 1.7 / 上游各自许可证的逐件表 + 源码义务说明；同步进 `README.md`、`web/license.html`、`web/i18n.js`（11 张语言表 ×3 个键全部改写，另 22 处 `<b>GPL-2.0-or-later</b>` 换成 PARLZ.LICENSE 1.7） |
+| (a) 文本进盘 | 引导分区 `LICENSE.TXT` + `COPYING.TXT`(GPLv2 全文)；rootfs `/usr/share/licenses/<组件>/` 十一个目录 + `README` 索引 + `parlz/{LICENSE,PARLZ.LICENSE,LICENSES.md}`；根 `/LICENSE.TXT`（ISO 根与已安装根同源）；`/etc/parlz-release` 加 `license:` / `license-dir:` / `source-url:` |
+| (b) 授权说明 | `LICENSE` 就是**许可证正文**（与 `PARLZ.LICENSE` 逐字相同 —— 用户明确要求：不许在 `LICENSE` 里放自己写的摘要），分层说明另存 `LICENSES.md`：内核 GPL-2.0-only（含加进内核树的自有文件）/ 自有非内核部分 PARLZ.LICENSE 1.7 / 上游逐件表 + 源码义务。`README.md`、`AGENTS.md`、`web/license.html`、`web/i18n.js`（11 张语言表 ×3 个键全部改写，另 22 处 `<b>GPL-2.0-or-later</b>` 换成 PARLZ.LICENSE 1.7）同步 |
 | (c) 条款校准 | `PARLZ.LICENSE` 新增 **1.1.1 范围排除**（内核树与上游件不在本许可证覆盖内）、**12.2.1 GPL-2.0-only**（内核侧修改不得重新授权 + §3 源码义务 + §6 不附加限制）、**12.3.1 不适用于 GPLv2-only**（原 12.3 只声明与 GPLv3 双向兼容）；中英文各一份 |
 
 实测出来的四个坑（都写进 AGENTS.md 了）：
@@ -44,7 +44,7 @@
 
 - **`.gitignore` 是白名单，许可证文本一开始没被放行** —— `git status` 连 `??` 都不给，
   于是"源码仓库里根本没有 LICENSE / PARLZ.LICENSE"这件事毫无征兆。现在加了
-  `!/LICENSE` 与 `!/PARLZ.LICENSE`，并有一条判据盯着这两行不许被删。
+  `!/LICENSE`、`!/PARLZ.LICENSE` 与 `!/LICENSES.md`，并有判据盯着这三行不许被删(还断 LICENSE 与 PARLZ.LICENSE 逐字相同)。
 - **演示站点对许可证只挂目录不挂字节**，`cat` 只会说"没有实体字节"。现在
   `web-rootfs-sync.sh` 把 `/usr/share/licenses/**` 与 `/LICENSE.TXT` 一并同步
   （站点 57.7 MiB），演示里 `cat /usr/share/licenses/linux-kernel/COPYING`

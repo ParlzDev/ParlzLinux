@@ -16,7 +16,9 @@
 !/AGENTS.md
 !/STATUS.md
 # 授权文本必须进仓库: 交付盘与官网都引用它们, 漏在 git 外等于"源码里没有许可证"
+# LICENSE = PARLZ.LICENSE 的逐字副本(许可证正文本身); LICENSES.md = 分层说明
 !/LICENSE
+!/LICENSES.md
 !/PARLZ.LICENSE
 !/.parlz-release
 !/.parlz-release-ntclks

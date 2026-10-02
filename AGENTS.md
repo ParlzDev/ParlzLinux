@@ -1115,16 +1115,23 @@ wsl -d Ubuntu-24.04 -u root -e bash -c "sh /mnt/f/Linux/Parlz/scripts/yum-verify
 | 位置 | 内容 | 谁负责 |
 |---|---|---|
 | FAT16 引导分区 `LICENSE.TXT` + `COPYING.TXT` | 分层说明 + GPLv2 全文（vmlinuz 就在同一分区） | `scripts/gen-fatboot.sh`（带挂载复核） |
-| rootfs `/usr/share/licenses/<组件>/` | 10 个上游件 + `parlz/{PARLZ.LICENSE,LICENSE}` + `README` 索引 | `scripts/build-userland.sh`（缺目录即失败） |
+| rootfs `/usr/share/licenses/<组件>/` | 10 个上游件 + `parlz/{LICENSE,PARLZ.LICENSE,LICENSES.md}` + `README` 索引 | `scripts/build-userland.sh`（缺目录即失败；并且 `cmp` 断 `LICENSE` 与 `PARLZ.LICENSE` 逐字相同） |
 | rootfs `/LICENSE.TXT` | 介质副本说明（ISO 根与已安装根都有它） | 同上，取自 `third_party/licenses/PARLZ-MEDIA-LICENSE.txt` |
 | `/etc/parlz-release` | `license:` / `license-dir:` / `source-url:` 三行 | 同上 |
 
-四条实测出来的坑：
+五条实测出来的坑：
 
+- **`LICENSE` 就是许可证正文本身**（与 `PARLZ.LICENSE` 逐字相同，用户明确要求过），
+  不要在它里面写"我总结的分层说明" —— 摘要那份是 `LICENSES.md`。这条由两处盯着：
+  `build-userland.sh` 打包前 `cmp`（不一致就中止构建），以及
+  `web-demo-test.js` 的"LICENSE 就是 PARLZ.LICENSE 的逐字副本"判据。
 - **许可证文本要从仓库取**，不要在构建时现拷宿主的 `/usr/share/common-licenses` ——
   换一台机器就悄悄少文件，而"没随二进制复现许可证"是 GPLv2 §3 的硬违规，
   不会有任何报错。文本由 `scripts/vendor-licenses.sh` 一次性收进
-  `third_party/licenses/`，并**打印出** `web/system.js` 里 `LICENSES` 字面量该写的字节数。
+  `third_party/licenses/`；`web/system.js` 里的 `LICENSES` / `MEDIA_LICENSE` /
+  两个 `_SIZE` 常量**由 `scripts/sync-license-literals.js` 从真文件生成**
+  （手抄必漂：实测漂过两次），改完文本跑一次它，`--check` 模式由
+  `web-demo-test.js` 当判据守着。
 - **改了 rootfs 布局必须走 `build-userland.sh` 全链**：`build-2404.sh` 那条快速路
   只是把 `$U/root` **现有内容**重新 cpio 一遍，不会执行 build-userland 里的定制步骤
   （许可证拷贝、`/etc/parlz-release` 生成都在那里）。实测：快速路出来的盘

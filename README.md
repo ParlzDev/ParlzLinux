@@ -536,12 +536,15 @@ GCC 15 工具链的三个必踩陷阱、以及 ext2 超级块/组描述符的精
 
 ## 许可
 
-授权是**分层**的，逐件清单见 [LICENSE](LICENSE)：
+[`LICENSE`](LICENSE) 就是许可证正文本身（与 [`PARLZ.LICENSE`](PARLZ.LICENSE) 逐字相同，
+PARLZ Open Source License Version 1.7）。**谁适用哪份许可证**写在
+[`LICENSES.md`](LICENSES.md) —— 授权是分层
+的，不能一刀切：
 
 | 部分 | 许可证 |
 |---|---|
 | `linux-7.2.5/` 整树（**含** Parlz 加进内核的标识层、`setup.ld` 修复、defconfig 等） | GNU GPL-2.0-only（不能被重新授权） |
-| Parlz 自有的用户空间 / 脚本 / 官网 / 文档 | [PARLZ.LICENSE](PARLZ.LICENSE) Version 1.7 |
+| Parlz 自有的用户空间 / 脚本 / 官网 / 文档 | PARLZ.LICENSE Version 1.7（正文即 `LICENSE`） |
 | 上游组件（BusyBox、SYSLINUX、bash、nano、wget、glibc、OpenSSL、curl、miniz、GCC、LLVM…） | 各自原许可证 |
 
 分发 ISO / IMG 即分发内核目标代码，所以介质上带着许可证全文：引导分区

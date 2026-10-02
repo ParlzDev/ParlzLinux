@@ -10,7 +10,7 @@ ParlzOS — 授权说明（介质副本 / on-media notice）
         → 全文：本介质 `COPYING.TXT`；已安装根 `/usr/share/licenses/linux-kernel/COPYING`
 
   2) Parlz 自有代码（用户空间、构建脚本、官网、文档）
-        → PARLZ.LICENSE Version 1.7
+        → PARLZ.LICENSE Version 1.7（许可证正文即仓库根的 LICENSE，两者逐字相同）
         → 全文：已安装根 `/usr/share/licenses/parlz/PARLZ.LICENSE`
         → 商标：该许可证第 5 条，不授予名称/标识使用权
 
@@ -20,7 +20,7 @@ ParlzOS — 授权说明（介质副本 / on-media notice）
         → 各自的原许可证，PARLZ.LICENSE 不覆盖它们
         → 全文：已安装根 `/usr/share/licenses/<组件>/`，索引见同目录 README
 
-分层授权的完整说明：`/usr/share/licenses/parlz/LICENSE`（仓库根 `LICENSE`）。
+分层授权的完整说明：`/usr/share/licenses/parlz/LICENSES.md`（仓库根 `LICENSES.md`）。
 
 源码义务（GPLv2 §3 / LGPL-2.1 §6）
     分发本介质 = 分发内核目标代码与静态链接的用户空间二进制，

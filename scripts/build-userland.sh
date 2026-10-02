@@ -194,8 +194,14 @@ for d in "$LIC"/*/; do
   cp -a "$d." "$ROOT/usr/share/licenses/$n/"
 done
 cp -a "$LIC/README" "$ROOT/usr/share/licenses/README"
+# 仓库根是这两个文件的唯一来源: LICENSE = PARLZ.LICENSE 的逐字副本(许可证正文),
+# LICENSES.md = 分层说明。两个名字都放进盘里, 免得有人只找 LICENSE 或只找
+# PARLZ.LICENSE 时扑空(44 KB 的重复比"找不到"便宜)。
+[ -s /mnt/f/Linux/Parlz/LICENSE ] && [ -s /mnt/f/Linux/Parlz/PARLZ.LICENSE ] && \
+  cmp -s /mnt/f/Linux/Parlz/LICENSE /mnt/f/Linux/Parlz/PARLZ.LICENSE || {
+    echo "    LICENSE 与 PARLZ.LICENSE 必须逐字相同(前者就是许可证正文), 现在不一致"; exit 1; }
 cp -a /mnt/f/Linux/Parlz/PARLZ.LICENSE /mnt/f/Linux/Parlz/LICENSE \
-      "$ROOT/usr/share/licenses/parlz/"
+      /mnt/f/Linux/Parlz/LICENSES.md "$ROOT/usr/share/licenses/parlz/"
 # 根目录再放一份"介质副本"说明: rootfs 平铺进 ISO 时它就在 ISO 根,
 # cpfs 装盘时也跟着进已安装根 —— 与引导分区上那份 LICENSE.TXT 逐字同源
 # (同一份 third_party/licenses/PARLZ-MEDIA-LICENSE.txt, 别各写一份)。
