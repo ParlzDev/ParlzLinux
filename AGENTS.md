@@ -41,6 +41,16 @@
 wsl -d Ubuntu-24.04 -u root -e bash -c "DEBIAN_FRONTEND=noninteractive apt-get install -y <pkg>"
 ```
 
+> **推送到 GitHub 的网络现实**：这台机器 `github.com:443` **直连经常不通**（WSL 与
+> Git Bash 都会 `Failed to connect ... after 13x ms`），而 `api.github.com` 一直通 ——
+> 因为本机有个本地代理（`127.0.0.1:51081`，`gh` 会自动读注册表，**git 不会**）。
+> 所以推送要显式带上：`git -c http.proxy=http://127.0.0.1:51081 -c https.proxy=... push ...`
+> （Windows 侧 git 用这个最直接）；从 WSL 推则要靠重试碰运气。凭据别落盘也别进配置：
+> 现取 `gh auth token`（一次性 askpass/credential helper，用完删），
+> 仓库配置里只留不含 token 的远程 URL。
+> 另：Git Bash 会把 `-c credential.helper=!sh /c/...` 这种参数做路径转换/转义，
+> 实测两种写法都失败过 —— 要么用 Windows 路径 + `MSYS_NO_PATHCONV=1`，要么直接走 WSL 的 `GIT_ASKPASS`。
+
 > **验收脚本正在跑的时候不要编辑它。** dash/sh 是**按字节偏移增量读取**脚本的，
 > 中途改内容会让后面的行从错误的偏移开始执行 —— 实测报出
 > `uefi-e2e.sh: 82: uefi-e2e: FAIL ->: not found` 这种"源码里根本没有这句"的错，
