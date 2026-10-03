@@ -1044,6 +1044,13 @@ async function run(line) {
     check("授权: LICENSE 就是 PARLZ.LICENSE 的逐字副本(正文不是另写的一份)",
           fs.readFileSync(path.join(ROOTDIR, "LICENSE"), "utf8") ===
           fs.readFileSync(path.join(ROOTDIR, "PARLZ.LICENSE"), "utf8"));
+    // 许可证正文里不许留着未填的占位符 —— 这份文本会随 ISO/IMG 与官网公开出去。
+    const licText = fs.readFileSync(path.join(ROOTDIR, "LICENSE"), "utf8");
+    const ph = (licText.match(/\[(Copyright Holder Name|版权持有人姓名|your country\/region|你所在国家\/地区|your location|你所在地|official language of your location|你所在地官方语言)\]/g) || []).join(" ");
+    check("授权: 正文里没有未填的占位符(版权人/国家/地区/诉讼语言都已署名)",
+          ph === "" && /Copyright \(c\) \d{4} JGZ_YES/.test(licText) &&
+          /中华人民共和国法律/.test(licText) && /广东省深圳市/.test(licText),
+          ph + " | " + (licText.match(/^Copyright \(c\).*$/m) || [""])[0]);
     check("授权: 分层说明在 LICENSES.md 里(内核 GPL-2.0-only / 自有 PARLZ.LICENSE)",
           /GPL-2\.0-only/.test(fs.readFileSync(path.join(ROOTDIR, "LICENSES.md"), "utf8")));
     // 尺寸一律按**字节**比: 文本里有中文, `String.length` 是 UTF-16 码元数

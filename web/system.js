@@ -85,9 +85,9 @@ const LICENSES = [
   ["miniz", "LICENSE", 1380],
   ["nano", "COPYING", 35149],
   ["openssl", "LICENSE.txt", 11358],
-  ["parlz", "LICENSE", 44646],
-  ["parlz", "LICENSES.md", 5124],
-  ["parlz", "PARLZ.LICENSE", 44646],
+  ["parlz", "LICENSE", 43456],
+  ["parlz", "LICENSES.md", 5336],
+  ["parlz", "PARLZ.LICENSE", 43456],
   ["syslinux", "COPYING", 18092],
   ["wget", "COPYING", 35149],
 ];

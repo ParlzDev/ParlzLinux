@@ -21,6 +21,9 @@
 
 ## 2. Parlz 自有代码 → `PARLZ.LICENSE`（Version 1.7，全文见 `LICENSE`）
 
+版权持有人：**JGZ_YES**（所在地：中国广东省深圳市）。许可证正文的版权行与
+第十五条（法律适用 / 争议管辖 / 诉讼语言）已按此署名，不再是模板占位符。
+
 覆盖：`userland/`（不含 `userland/nano/`、`userland/busybox/` 等上游目录）、
 `scripts/`、`web/`（官网与演示终端）、文档（`README.md`、`AGENTS.md`、`STATUS.md`、
 本文件）、`NTCLKS-main/` 的发行版封装层（该子仓库本体是 Apache-2.0）。

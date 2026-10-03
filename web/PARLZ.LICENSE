@@ -3,8 +3,8 @@ PARLZ OPEN SOURCE LICENSE (Version 1.7)
 PARLZ 开源许可证（版本 1.7）
 ========================================================================
 
-Copyright (c) 2026 [Copyright Holder Name]
-版权所有 (c) 2026 [版权持有人姓名]
+Copyright (c) 2026 JGZ_YES
+版权所有 (c) 2026 JGZ_YES (Shenzhen, Guangdong, China)
 
 All rights reserved.
 保留所有权利。
@@ -560,16 +560,16 @@ Article 15 Governing Law and Dispute Resolution
 
 15.1 Governing Law
      This license is governed by the laws of
-     [your country/region].
+     China.
 
 15.2 Dispute Resolution
      Disputes arising from this license shall be
      submitted to the competent court in
-     [your location].
+     Shenzhen, Guangdong, China.
 
 15.3 Language of Proceedings
      Proceedings shall be conducted in
-     [official language of your location].
+     Chinese (Simplified).
 
 15.4 Attorney Fees
      Unless otherwise provided by law, each party
@@ -1098,14 +1098,14 @@ PART II — 中文
 ------------------------------------------------------------------------
 
 15.1 适用法律
-     本许可证适用 [你所在国家/地区] 法律。
+     本许可证适用中华人民共和国法律。
 
 15.2 争议解决
      因本许可证产生的争议，应提交
-     [你所在地] 有管辖权的法院解决。
+     中华人民共和国广东省深圳市有管辖权的法院解决。
 
 15.3 诉讼语言
-     诉讼应以 [你所在地官方语言] 进行。
+     诉讼应以中文（简体）进行。
 
 15.4 律师费
      除非法律另有规定，各方自行承担律师费。
@@ -1193,21 +1193,23 @@ closed-source form.
 
 
 ========================================================================
-PLACEHOLDERS TO FILL / 需要填写的占位符
+FILLED-IN PARTICULARS / 已填写的署名与管辖信息
 ========================================================================
 
-[Copyright Holder Name]        -> Your name or organization
-[版权持有人姓名]                -> 你的姓名或组织
+Copyright holder / 版权持有人
+    JGZ_YES
 
-[your country/region]          -> e.g., China
-[你所在国家/地区]               -> 例如：中国
+Country / region / 国家・地区
+    China  /  中华人民共和国
 
-[your location]                -> e.g., Shenzhen, China
-[你所在地]                      -> 例如：中国深圳
+Location / 所在地（争议管辖法院所在地）
+    Shenzhen, Guangdong, China  /  中国广东省深圳市
 
-[official language of your     -> e.g., Chinese
- location]
-[你所在地官方语言]              -> 例如：中文
+Language of proceedings / 诉讼语言
+    Chinese (Simplified)  /  中文（简体）
+
+以上信息落在本文的：版权行（第 6-7 行）、第十五条 / 第十五条（法律适用与争议解决）。
+本许可证其余条款不因填写而改变。
 
 ========================================================================
 END OF LICENSE

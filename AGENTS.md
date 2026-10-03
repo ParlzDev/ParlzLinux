@@ -1125,6 +1125,11 @@ wsl -d Ubuntu-24.04 -u root -e bash -c "sh /mnt/f/Linux/Parlz/scripts/yum-verify
   不要在它里面写"我总结的分层说明" —— 摘要那份是 `LICENSES.md`。这条由两处盯着：
   `build-userland.sh` 打包前 `cmp`（不一致就中止构建），以及
   `web-demo-test.js` 的"LICENSE 就是 PARLZ.LICENSE 的逐字副本"判据。
+- **正文里不许留未填的占位符**。已署名：版权人 `JGZ_YES`，所在地
+  `中国广东省深圳市`，管辖与适用法律见第十五条（中华人民共和国法律 / 深圳法院 /
+  中文简体）。`web-demo-test.js` 会同时断"没有 `[占位符]` 残留"和版权行存在 ——
+  这份文本随 ISO/IMG 与官网公开，也随 rootfs 进盘（`/usr/share/licenses/parlz/`），
+  改了正文要重走 `build-userland.sh` 全链才会到交付物上。
 - **许可证文本要从仓库取**，不要在构建时现拷宿主的 `/usr/share/common-licenses` ——
   换一台机器就悄悄少文件，而"没随二进制复现许可证"是 GPLv2 §3 的硬违规，
   不会有任何报错。文本由 `scripts/vendor-licenses.sh` 一次性收进

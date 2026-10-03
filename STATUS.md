@@ -34,7 +34,14 @@
 | 演示里 `bash/COPYING` 报 35149、盘上是 35147 | 手写进 `web/system.js` 的字节数会漂（bash 那份早先是手工存的 GPLv3 文本，与 Ubuntu 的那份差 2 字节） | `vendor-licenses.sh` 结尾**打印**出该写进 `LICENSES` 字面量的真值；`web-demo-test.js` 新增 13 条判据逐条比对（仓库 = 演示 = 尺寸） |
 | 判据里 `media.length(1130) === 1772` 假红 | 文本含中文，`String.length` 是 UTF-16 码元，盘上是 UTF-8 字节 | 一律 `Buffer.byteLength(...)` 与 `fs.statSync().size` 比 |
 
-验证（全部真跑）：`node scripts/web-demo-test.js` **285/285 ALL PASS**（新增"授权:"一批判据）；
+许可证正文的占位符也已署名：版权持有人 **JGZ_YES**，所在地 **中国广东省深圳市**。
+填的位置是 `LICENSE` / `PARLZ.LICENSE` 的版权行（第 6-7 行）与第十五条（适用
+中华人民共和国法律 / 提交广东省深圳市有管辖权的法院 / 诉讼语言中文简体），
+末尾那段"需要填写的占位符"清单改成了"已填写的署名信息"。这条由
+`web-demo-test.js` 的"正文里没有未填的占位符"判据守着 —— 这份文本会随 ISO/IMG
+与官网一起公开，留个 `[版权持有人姓名]` 出去很难看。
+
+验证（全部真跑）：`node scripts/web-demo-test.js` **289/289 ALL PASS**（含"授权:"一批判据）；
 `sh scripts/iso-disk-e2e.sh` **PASS**；`bash scripts/refresh-shipped-disk.sh` **OK**；
 挂回交付快照的分区 2 复核：`/usr/share/licenses` 12 项、`/LICENSE.TXT` 1772 字节、
 `/etc/parlz-release` 里有 `source-url`；引导镜像 FAT16 里 `LICENSE.TXT` + `COPYING.TXT`
